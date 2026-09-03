@@ -2,30 +2,25 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Fixture;
 use Illuminate\Http\JsonResponse;
-use Symfony\Component\Process\Exception\ProcessFailedException;
-use Symfony\Component\Process\Process;
+use Illuminate\Http\Request;
 
 class RiskEngineController extends Controller
 {
-    public function __invoke(): JsonResponse
+    public function __invoke(Request $request): JsonResponse
     {
-        // Use absolute paths to eliminate Python RuntimeWarnings
-        $pythonBinary = base_path('../venv/bin/python3');
-        $scriptPath = base_path('../risk_engine.py');
-
-        $process = new Process([$pythonBinary, $scriptPath, '--json']);
-        $process->run();
-
-        if (! $process->isSuccessful()) {
-            throw new ProcessFailedException($process);
-        }
-
-        $output = json_decode($process->getOutput(), true);
+        $sport = $request->query('sport', 'soccer_epl');
+        
+        // Fetch matching records from the typed PostgreSQL table
+        $fixtures = Fixture::where('sport_key', $sport)
+            ->where('commence_time', '>=', now()->startOfDay())
+            ->orderBy('commence_time', 'asc')
+            ->get();
 
         return response()->json([
             'status' => 'success',
-            'data' => $output,
+            'data' => $fixtures,
         ]);
     }
 }
