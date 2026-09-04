@@ -151,4 +151,34 @@ class PlatformController extends Controller
             'activityFeed' => $activities
         ]);
     }
+
+    public function askAI(Request $request)
+    {
+        $matchContext = $request->input('match');
+        $userMessage = $request->input('message');
+        $history = $request->input('history', []);
+        
+        $apiKey = env('GEMINI_API_KEY', 'null');
+
+        $pythonBinary = base_path('../venv/bin/python3');
+        $scriptPath = base_path('../ai_agent.py');
+
+        // Pass structured payload via STDIN to handle complex strings safely
+        $process = new \Symfony\Component\Process\Process([$pythonBinary, $scriptPath]);
+        $process->setInput(json_encode([
+            'api_key' => $apiKey,
+            'match' => $matchContext,
+            'history' => $history,
+            'message' => $userMessage
+        ]));
+        $process->setTimeout(60);
+        $process->run();
+
+        if ($process->isSuccessful()) {
+            $output = json_decode($process->getOutput(), true);
+            return response()->json(['response' => $output['response'] ?? 'I could not synthesize an answer.']);
+        }
+
+        return response()->json(['response' => 'AI engine communication error.'], 500);
+    }
 }

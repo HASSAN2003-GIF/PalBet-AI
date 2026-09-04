@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 
 const AuthModal = ({ isOpen, onClose, onLogin }) => {
@@ -23,14 +23,13 @@ const AuthModal = ({ isOpen, onClose, onLogin }) => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    phone: `+255${mobile}`, // Defaulting to Tz prefix for simplicity in UI
+                    phone: `+255${mobile}`,
                     password: password,
                     role: isAdmin ? 'admin' : 'player'
                 })
             });
             const userData = await response.json();
             
-            // Give users 10,000 free starting points instead of $15
             if (!isAdmin && userData.balanceUsd === 15) {
                 userData.balanceUsd = 10000; 
             }
@@ -85,7 +84,132 @@ const AuthModal = ({ isOpen, onClose, onLogin }) => {
     );
 };
 
-// 🟢 MY PREDICTIONS SIDEBAR (Pivoted Terminology)
+// Conversational AI Chat Modal
+const AIChatModal = ({ match, onClose }) => {
+    const [messages, setMessages] = useState([
+        { 
+            role: 'ai', 
+            text: `Hey there! I am your analyst for **${match?.home_team} vs ${match?.away_team}**.\n\nI can surf live web sources for lineups, injury reports, or tactical simulations. What would you like to explore?` 
+        }
+    ]);
+    const [input, setInput] = useState('');
+    const [isTyping, setIsTyping] = useState(false);
+    const messagesEndRef = useRef(null);
+
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages, isTyping]);
+
+    if (!match) return null;
+
+    const sendMessage = async (e) => {
+        e.preventDefault();
+        const trimmed = input.trim();
+        if (!trimmed || isTyping) return;
+
+        const updatedHistory = [...messages, { role: 'user', text: trimmed }];
+        setMessages(updatedHistory);
+        setInput('');
+        setIsTyping(true);
+
+        try {
+            const res = await fetch('/api/platform/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    match: `${match.home_team} vs ${match.away_team}`,
+                    message: trimmed,
+                    history: messages
+                })
+            });
+            const data = await res.json();
+            setMessages(prev => [...prev, { role: 'ai', text: data.response }]);
+        } catch (error) {
+            setMessages(prev => [...prev, { role: 'ai', text: "I lost connection to the retrieval pipeline. Please try again." }]);
+        } finally {
+            setIsTyping(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-slate-900/60 z-[70] flex items-center justify-center p-3 sm:p-4 backdrop-blur-sm">
+            <div className="bg-white w-full max-w-2xl h-[650px] max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+                <div className="h-16 bg-slate-900 px-6 flex items-center justify-between shrink-0 border-b border-slate-800">
+                    <div className="flex items-center space-x-3">
+                        <div className="relative">
+                            <div className="w-9 h-9 rounded-full bg-emerald-500 flex items-center justify-center text-white font-black text-xs">
+                                AI
+                            </div>
+                            <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-400 rounded-full border-2 border-slate-900"></div>
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-white font-extrabold text-sm tracking-wide">PalBet AI Assistant</span>
+                            <span className="text-emerald-400 text-[10px] font-bold uppercase tracking-wider">
+                                {match.home_team} vs {match.away_team}
+                            </span>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-1">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-50 space-y-4">
+                    {messages.map((msg, idx) => (
+                        <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[85%] rounded-2xl p-4 text-sm shadow-xs leading-relaxed ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-br-none' : 'bg-white border border-slate-200/80 text-slate-800 rounded-bl-none'}`}>
+                                <span dangerouslySetInnerHTML={{ 
+                                    __html: msg.text
+                                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                        .replace(/\n/g, '<br/>') 
+                                }} />
+                            </div>
+                        </div>
+                    ))}
+                    
+                    {isTyping && (
+                        <div className="flex justify-start">
+                            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-none p-3.5 shadow-xs flex items-center space-x-2">
+                                <span className="text-xs font-semibold text-slate-400">Consulting live web sources</span>
+                                <div className="flex space-x-1">
+                                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce"></div>
+                                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.15s]"></div>
+                                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.3s]"></div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    <div ref={messagesEndRef} />
+                </div>
+
+                <div className="p-3 sm:p-4 bg-white border-t border-slate-200 shrink-0">
+                    <form onSubmit={sendMessage} className="flex items-center space-x-2 bg-slate-50 border border-slate-300 rounded-full px-3 py-1.5 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500 transition-all">
+                        <input 
+                            type="text" 
+                            value={input} 
+                            onChange={(e) => setInput(e.target.value)}
+                            placeholder={`Ask about ${match.home_team}...`}
+                            className="flex-1 bg-transparent border-none outline-none text-sm px-2 text-slate-900 placeholder-slate-400"
+                            disabled={isTyping}
+                        />
+                        <button 
+                            type="submit" 
+                            disabled={!input.trim() || isTyping}
+                            className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${input.trim() && !isTyping ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                        >
+                            <svg className="w-4 h-4 translate-x-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const MyBetsSidebar = ({ isOpen, onClose, userId }) => {
     const [bets, setBets] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -239,11 +363,12 @@ function App() {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const [isMobileSlipOpen, setIsMobileSlipOpen] = useState(false);
 
-    // AI Prediction State
+    // AI Prediction & Chat State
     const [betSlip, setBetSlip] = useState([]);
     const [stakeAmount, setStakeAmount] = useState(100); 
     const [isBetting, setIsBetting] = useState(false);
     const [isMyBetsOpen, setIsMyBetsOpen] = useState(false); 
+    const [activeChatMatch, setActiveChatMatch] = useState(null);
 
     const fetchMenu = () => {
         fetch('/api/risk-analysis?action=menu')
@@ -369,7 +494,15 @@ function App() {
             <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} onLogin={(userData) => setCurrentUser(userData)} />
             <MyBetsSidebar isOpen={isMyBetsOpen} onClose={() => setIsMyBetsOpen(false)} userId={currentUser?.id} />
 
-            {/* 🟢 MOBILE COMPATIBLE LEFT SIDEBAR */}
+            {/* AI Chat Modal */}
+            {activeChatMatch && (
+                <AIChatModal 
+                    match={activeChatMatch} 
+                    onClose={() => setActiveChatMatch(null)} 
+                />
+            )}
+
+            {/* Mobile / Desktop Left Sidebar */}
             <aside className={`${isMobileMenuOpen ? 'fixed inset-0 z-40 bg-white' : 'hidden'} md:flex md:w-80 bg-white border-r border-slate-200 flex-col z-20 shadow-sm shrink-0`}>
                 <div className="h-16 flex items-center justify-between px-6 border-b border-slate-200">
                     <div className="flex items-center space-x-2">
@@ -378,7 +511,6 @@ function App() {
                             PalBet <span className="text-emerald-500">AI</span>
                         </span>
                     </div>
-                    {/* Mobile Close Button */}
                     <button className="md:hidden text-slate-500 p-2" onClick={() => setIsMobileMenuOpen(false)}>
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
@@ -418,7 +550,6 @@ function App() {
             <div className="flex-1 flex flex-col overflow-hidden">
                 <header className="bg-white border-b border-slate-200 z-10 shadow-sm">
                     <div className="h-16 flex items-center justify-between px-4 md:px-8">
-                        {/* Mobile Hamburger Trigger */}
                         <div className="flex items-center space-x-3">
                             <button className="md:hidden text-slate-600 p-1" onClick={() => setIsMobileMenuOpen(true)}>
                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" /></svg>
@@ -479,11 +610,17 @@ function App() {
                     ) : (
                         <div className={`grid grid-cols-1 ${betSlip.length > 0 ? 'lg:grid-cols-1 xl:grid-cols-2' : 'lg:grid-cols-2'} gap-4 md:gap-6 max-w-7xl mx-auto`}>
                             {processedData.map((match, idx) => (
-                                <div key={idx} className={`bg-white rounded-xl p-4 md:p-5 shadow-sm hover:shadow-md transition duration-200 border ${match.is_value_bet ? 'border-emerald-300' : 'border-slate-200'}`}>
-                                    
+                                <div 
+                                    key={idx} 
+                                    onClick={() => setActiveChatMatch(match)}
+                                    className="bg-white rounded-xl p-4 md:p-5 shadow-sm hover:shadow-md transition duration-200 border cursor-pointer border-slate-200 hover:border-emerald-300"
+                                >
                                     <div className="flex justify-between items-center mb-4">
                                         <span className="text-slate-500 text-[10px] md:text-xs font-semibold">{formatTime(match.commence_time)}</span>
-                                        <span className="text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[9px] md:text-[10px] uppercase font-bold border border-slate-200">AI Confidence: High</span>
+                                        <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded text-[9px] md:text-[10px] uppercase font-bold border border-emerald-200 flex items-center">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span>
+                                            Ask AI Analyst
+                                        </span>
                                     </div>
 
                                     <div className="flex items-center justify-between mb-4 md:mb-5">
@@ -503,27 +640,40 @@ function App() {
                                         </div>
                                     </div>
 
+                                    {/* Odds buttons with stopped propagation */}
                                     <div className="grid grid-cols-3 gap-2 mt-2 mb-3">
-                                        <button onClick={() => handleToggleBet(match, '1', match.odds_home)} className={`flex flex-col items-center py-1.5 rounded border transition-colors ${isBetSelected(match, '1') ? 'bg-emerald-500 border-emerald-500 text-white shadow-inner' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                                        <button 
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); handleToggleBet(match, '1', match.odds_home); }} 
+                                            className={`flex flex-col items-center py-1.5 rounded border transition-colors ${isBetSelected(match, '1') ? 'bg-emerald-500 border-emerald-500 text-white shadow-inner' : 'bg-slate-50 border-slate-200 hover:border-emerald-300 text-slate-700'}`}
+                                        >
                                             <span className="text-[9px] md:text-[10px] font-bold opacity-80 mb-0.5">1</span>
                                             <span className="text-xs md:text-sm font-black">{match.odds_home?.toFixed(2)}x</span>
                                         </button>
-                                        <button onClick={() => handleToggleBet(match, 'X', match.odds_draw)} disabled={!match.is_soccer} className={`flex flex-col items-center py-1.5 rounded border transition-colors ${!match.is_soccer ? 'opacity-30 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : isBetSelected(match, 'X') ? 'bg-emerald-500 border-emerald-500 text-white shadow-inner' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                                        <button 
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); handleToggleBet(match, 'X', match.odds_draw); }} 
+                                            disabled={!match.is_soccer} 
+                                            className={`flex flex-col items-center py-1.5 rounded border transition-colors ${!match.is_soccer ? 'opacity-30 cursor-not-allowed bg-slate-50 border-slate-200 text-slate-400' : isBetSelected(match, 'X') ? 'bg-emerald-500 border-emerald-500 text-white shadow-inner' : 'bg-slate-50 border-slate-200 hover:border-emerald-300 text-slate-700'}`}
+                                        >
                                             <span className="text-[9px] md:text-[10px] font-bold opacity-80 mb-0.5">X</span>
                                             <span className="text-xs md:text-sm font-black">{match.odds_draw ? match.odds_draw.toFixed(2) + 'x' : '-'}</span>
                                         </button>
-                                        <button onClick={() => handleToggleBet(match, '2', match.odds_away)} className={`flex flex-col items-center py-1.5 rounded border transition-colors ${isBetSelected(match, '2') ? 'bg-emerald-500 border-emerald-500 text-white shadow-inner' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                                        <button 
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); handleToggleBet(match, '2', match.odds_away); }} 
+                                            className={`flex flex-col items-center py-1.5 rounded border transition-colors ${isBetSelected(match, '2') ? 'bg-emerald-500 border-emerald-500 text-white shadow-inner' : 'bg-slate-50 border-slate-200 hover:border-emerald-300 text-slate-700'}`}
+                                        >
                                             <span className="text-[9px] md:text-[10px] font-bold opacity-80 mb-0.5">2</span>
                                             <span className="text-xs md:text-sm font-black">{match.odds_away?.toFixed(2)}x</span>
                                         </button>
                                     </div>
 
-                                    <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden flex opacity-75 mb-4 md:mb-5 mt-1">
+                                    <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden flex opacity-75 mb-1 mt-1">
                                         <div style={{ width: `${match.prob_home * 100}%` }} className="bg-emerald-500"></div>
                                         {match.is_soccer && <div style={{ width: `${match.prob_draw * 100}%` }} className="bg-amber-400"></div>}
                                         <div style={{ width: `${match.prob_away * 100}%` }} className="bg-sky-500"></div>
                                     </div>
-
                                 </div>
                             ))}
                         </div>
@@ -531,7 +681,7 @@ function App() {
                 </main>
             </div>
 
-            {/* 🟢 MOBILE BOTTOM NAVIGATION TABS */}
+            {/* Mobile Bottom Navigation */}
             <div className="md:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around items-center h-16 z-30 px-2 shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
                 <button onClick={() => { setIsMobileSlipOpen(false); setIsMyBetsOpen(false); }} className="flex flex-col items-center text-slate-500 hover:text-emerald-500">
                     <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
@@ -548,7 +698,7 @@ function App() {
                 </button>
             </div>
 
-            {/* 🟢 RESPONSIVE SLIP (Mobile Overlay OR Desktop Sidebar) */}
+            {/* Responsive Prediction Slip */}
             {(betSlip.length > 0 || isMobileSlipOpen) && (
                 <aside className={`${isMobileSlipOpen ? 'fixed inset-0 pt-16 z-40' : 'hidden md:flex'} w-full md:w-80 bg-white md:border-l border-slate-200 flex flex-col md:z-30 shadow-[-4px_0_15px_-3px_rgba(0,0,0,0.05)] md:shrink-0 animate-in slide-in-from-right-8 duration-200`}>
                     <div className="h-16 flex items-center justify-between px-6 border-b border-slate-200 bg-slate-900 text-white shadow-sm">
