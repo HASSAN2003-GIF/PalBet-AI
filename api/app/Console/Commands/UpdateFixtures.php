@@ -14,7 +14,19 @@ class UpdateFixtures extends Command
 
     public function handle()
     {
-        $sports = ['soccer_epl', 'basketball_nba', 'tennis_atp'];
+        // 🌍 Expanded to match the new Sofascore sidebar categories
+        $sports = [
+            'soccer_epl',
+            'soccer_spain_la_liga',
+            'soccer_italy_serie_a',
+            'soccer_germany_bundesliga',
+            'soccer_france_ligue_one',
+            'soccer_uefa_champs_league',
+            'soccer_usa_mls',
+            'basketball_nba',
+            'tennis_atp'
+        ];
+        
         $pythonBinary = base_path('../venv/bin/python3');
         $scriptPath = base_path('../risk_engine.py');
         $apiKey = env('ODDS_API_KEY', '');
@@ -51,7 +63,7 @@ class UpdateFixtures extends Command
                                 'prob_away' => $match['prob_away'],
                                 'pred_score' => $match['pred_score'],
                                 'home_form' => $match['home_form'] ?? 'W,D,L,W,D',
-                            'away_form' => $match['away_form'] ?? 'W,D,L,W,D',
+                                'away_form' => $match['away_form'] ?? 'W,D,L,W,D',
                                 'market_1_label' => $match['market_1_label'],
                                 'market_1_val' => $match['market_1_val'],
                                 'market_2_label' => $match['market_2_label'],
