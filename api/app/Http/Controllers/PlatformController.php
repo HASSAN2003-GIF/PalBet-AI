@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\Process;
+use Illuminate\Support\Facades\Http;
 
 class PlatformController extends Controller
 {
@@ -309,11 +310,10 @@ class PlatformController extends Controller
     
     public function getDailySchedule(Request $request)
     {
-        // 1. Get the requested date (defaults to today)
         $date = $request->query('date', now()->format('Y-m-d'));
 
-        // 2. Fetch all matches happening globally on this date
-        $response = \Illuminate\Support\Facades\Http::withHeaders([
+        // Fetch all fixtures for the date from API-Football
+        $response = Http::withHeaders([
             'x-apisports-key' => env('FOOTBALL_API_KEY')
         ])->get('https://v3.football.api-sports.io/fixtures', [
             'date' => $date
@@ -322,41 +322,68 @@ class PlatformController extends Controller
         $fixtures = $response->json()['response'] ?? [];
         $grouped = [];
 
-        // 3. Sort the matches into Country > League folders
         foreach ($fixtures as $item) {
-            $country = $item['league']['country'] ?? 'World';
             $leagueId = $item['league']['id'];
             $leagueName = $item['league']['name'];
+            
+            // Explicitly group UEFA club competitions under 'Europe'
+            // Comprehensive Continental & International Mapping
+            $europeIds = [2, 3, 4, 5, 531, 841, 848]; // UCL, UEL, UECL, Euro, Nations League, Super Cup
+            $africaIds = [12, 19, 29]; // CAF Champions League, CAF Confederation Cup, AFCON
+            $asiaIds = [17, 18]; // AFC Champions League, Asian Cup
+            $southAmericaIds = [9, 13, 14, 73]; // Copa America, Libertadores, Sudamericana, Recopa
+            $concacafIds = [16, 22]; // CONCACAF Champions Cup, Gold Cup
+            $worldIds = [1, 10, 15, 21, 667]; // World Cup, Friendlies, Club World Cup
 
-            // Create the Country folder if it doesn't exist
+            if (in_array($leagueId, $europeIds)) {
+                $country = 'Europe';
+                $flag = 'https://media.api-sports.io/flags/eu.svg';
+            } elseif (in_array($leagueId, $africaIds)) {
+                $country = 'Africa';
+                $flag = $item['league']['flag'] ?? null; 
+            } elseif (in_array($leagueId, $asiaIds)) {
+                $country = 'Asia';
+                $flag = $item['league']['flag'] ?? null;
+            } elseif (in_array($leagueId, $southAmericaIds)) {
+                $country = 'South America';
+                $flag = $item['league']['flag'] ?? null;
+            } elseif (in_array($leagueId, $concacafIds)) {
+                $country = 'North & Central America';
+                $flag = $item['league']['flag'] ?? null;
+            } elseif (in_array($leagueId, $worldIds)) {
+                $country = 'World';
+                $flag = $item['league']['flag'] ?? null;
+            } else {
+                $country = $item['league']['country'] ?? 'World';
+                $flag = $item['league']['flag'] ?? null;
+            }
+
             if (!isset($grouped[$country])) {
                 $grouped[$country] = [
                     'country' => $country,
-                    'flag' => $item['league']['flag'],
+                    'flag' => $flag,
                     'total_matches' => 0,
                     'leagues' => []
                 ];
             }
 
-            // Create the League folder inside the Country
             if (!isset($grouped[$country]['leagues'][$leagueId])) {
                 $grouped[$country]['leagues'][$leagueId] = [
                     'id' => $leagueId,
                     'name' => $leagueName,
-                    'logo' => $item['league']['logo'],
+                    'logo' => $item['league']['logo'] ?? null,
                     'matches' => []
                 ];
             }
 
-            // Add the Match to the League folder
             $grouped[$country]['leagues'][$leagueId]['matches'][] = [
                 'id' => $item['fixture']['id'],
-                'time' => substr($item['fixture']['date'], 11, 5), // Extracts HH:MM
+                'time' => substr($item['fixture']['date'], 11, 5),
                 'status' => $item['fixture']['status']['short'],
                 'home' => $item['teams']['home']['name'],
                 'away' => $item['teams']['away']['name'],
-                'home_logo' => $item['teams']['home']['logo'],
-                'away_logo' => $item['teams']['away']['logo'],
+                'home_logo' => $item['teams']['home']['logo'] ?? null,
+                'away_logo' => $item['teams']['away']['logo'] ?? null,
                 'home_score' => $item['goals']['home'],
                 'away_score' => $item['goals']['away']
             ];
@@ -364,11 +391,8 @@ class PlatformController extends Controller
             $grouped[$country]['total_matches']++;
         }
 
-        // 4. Return the folders sorted by which country has the most matches
         $result = array_values($grouped);
-        usort($result, function($a, $b) {
-            return $b['total_matches'] <=> $a['total_matches'];
-        });
+       usort($result, fn($a, $b) => strcasecmp($a['country'], $b['country']));
 
         return response()->json($result);
     }

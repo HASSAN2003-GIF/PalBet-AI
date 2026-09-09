@@ -25,3 +25,5 @@ Route::post('/api/platform/bet', [PlatformController::class, 'placeBet'])
 
     Route::post('/api/platform/chat', [\App\Http\Controllers\PlatformController::class, 'askAI'])
     ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
+
+    Route::get('/api/schedule', [App\Http\Controllers\PlatformController::class, 'getDailySchedule']);
