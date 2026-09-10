@@ -308,91 +308,190 @@ class PlatformController extends Controller
         return response()->json(['response' => 'AI engine communication error.'], 500);
     }
     
-    public function getDailySchedule(Request $request)
+  public function getDailySchedule(Request $request)
     {
         $date = $request->query('date', now()->format('Y-m-d'));
 
-        // Fetch all fixtures for the date from API-Football
-        $response = Http::withHeaders([
-            'x-apisports-key' => env('FOOTBALL_API_KEY')
-        ])->get('https://v3.football.api-sports.io/fixtures', [
-            'date' => $date
-        ]);
+        // 1. Fetch risk engine database records (3-day buffer to prevent timezone cutoff)
+        $start = \Carbon\Carbon::parse($date)->subDays(1)->format('Y-m-d');
+        $end = \Carbon\Carbon::parse($date)->addDays(1)->format('Y-m-d');
+        $dbFixtures = \App\Models\Fixture::whereBetween('date_str', [$start, $end])->get();
 
-        $fixtures = $response->json()['response'] ?? [];
+        // 2. Fetch live structural feed from API-Sports for logos, live scores, and country flags
+        $apiFixtures = \Illuminate\Support\Facades\Cache::remember("api_fixtures_{$date}", now()->addMinutes(15), function () use ($date) {
+            $response = \Illuminate\Support\Facades\Http::withHeaders([
+                'x-apisports-key' => env('FOOTBALL_API_KEY')
+            ])->timeout(120)->get('https://v3.football.api-sports.io/fixtures', ['date' => $date]);
+
+            return $response->successful() ? ($response->json()['response'] ?? []) : [];
+        });
+
+        $normalize = function ($str) {
+            $str = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $str) ?: $str;
+            return preg_replace('/[^a-z0-9]/', '', strtolower(trim($str)));
+        };
+
         $grouped = [];
 
-        foreach ($fixtures as $item) {
-            $leagueId = $item['league']['id'];
-            $leagueName = $item['league']['name'];
-            
-            // Explicitly group UEFA club competitions under 'Europe'
-            // Comprehensive Continental & International Mapping
-            $europeIds = [2, 3, 4, 5, 531, 841, 848]; // UCL, UEL, UECL, Euro, Nations League, Super Cup
-            $africaIds = [12, 19, 29]; // CAF Champions League, CAF Confederation Cup, AFCON
-            $asiaIds = [17, 18]; // AFC Champions League, Asian Cup
-            $southAmericaIds = [9, 13, 14, 73]; // Copa America, Libertadores, Sudamericana, Recopa
-            $concacafIds = [16, 22]; // CONCACAF Champions Cup, Gold Cup
-            $worldIds = [1, 10, 15, 21, 667]; // World Cup, Friendlies, Club World Cup
+        foreach ($dbFixtures as $f) {
+            $key = strtolower($f->sport_key);
+            $isSoccer = $f->is_soccer || str_contains($key, 'soccer');
 
-            if (in_array($leagueId, $europeIds)) {
-                $country = 'Europe';
+            $homeName = $f->home_team;
+            $awayName = $f->away_team;
+            $homeLogo = $f->home_logo;
+            $awayLogo = $f->away_logo;
+            $status = 'NS';
+            $homeScore = null;
+            $awayScore = null;
+            $matchTime = $f->commence_time ? $f->commence_time->format('H:i') : '19:00';
+
+            // Clean league name
+            $cleanLeague = ucwords(str_replace([
+                'soccer_', 'basketball_', 'tennis_', 'americanfootball_', 'baseball_',
+                'icehockey_', 'mma_', 'rugbyleague_', 'rugbyunion_', 'aussierules_', '_'
+            ], ['', '', '', '', '', '', '', '', '', '', ' '], $key));
+
+            if ($isSoccer) {
+                $category = 'International Clubs';
                 $flag = 'https://media.api-sports.io/flags/eu.svg';
-            } elseif (in_array($leagueId, $africaIds)) {
-                $country = 'Africa';
-                $flag = $item['league']['flag'] ?? null; 
-            } elseif (in_array($leagueId, $asiaIds)) {
-                $country = 'Asia';
-                $flag = $item['league']['flag'] ?? null;
-            } elseif (in_array($leagueId, $southAmericaIds)) {
-                $country = 'South America';
-                $flag = $item['league']['flag'] ?? null;
-            } elseif (in_array($leagueId, $concacafIds)) {
-                $country = 'North & Central America';
-                $flag = $item['league']['flag'] ?? null;
-            } elseif (in_array($leagueId, $worldIds)) {
-                $country = 'World';
-                $flag = $item['league']['flag'] ?? null;
+
+                $normH = $normalize($homeName);
+                $normA = $normalize($awayName);
+                $bestScore = 0;
+                $matchedApi = null;
+
+                // Fuzzy match against API-Sports to retrieve official crests and flags
+                foreach ($apiFixtures as $apiItem) {
+                    $apiH = $normalize($apiItem['teams']['home']['name']);
+                    $apiA = $normalize($apiItem['teams']['away']['name']);
+
+                    similar_text($normH, $apiH, $simH);
+                    similar_text($normA, $apiA, $simA);
+                    $score = ($simH + $simA) / 2;
+
+                    if ($score > 65 && $score > $bestScore) {
+                        $bestScore = $score;
+                        $matchedApi = $apiItem;
+                    }
+                }
+
+                if ($matchedApi) {
+                    $homeLogo = $matchedApi['teams']['home']['logo'];
+                    $awayLogo = $matchedApi['teams']['away']['logo'];
+                    $status = $matchedApi['fixture']['status']['short'];
+                    $homeScore = $matchedApi['goals']['home'];
+                    $awayScore = $matchedApi['goals']['away'];
+                    $matchTime = substr($matchedApi['fixture']['date'], 11, 5);
+                    $cleanLeague = $matchedApi['league']['name'];
+
+                    $c = $matchedApi['league']['country'] ?? 'World';
+                    $category = ($c === 'World') ? 'International Clubs' : $c;
+                    $flag = $matchedApi['league']['flag'] ?? null;
+                    if ($category === 'Europe' || $category === 'International Clubs') {
+                        $flag = 'https://media.api-sports.io/flags/eu.svg';
+                    }
+                } else {
+                    if (str_contains($key, 'epl') || str_contains($key, 'england')) {
+                        $category = 'England';
+                        $flag = 'https://media.api-sports.io/flags/gb.svg';
+                    } elseif (str_contains($key, 'spain') || str_contains($key, 'la_liga')) {
+                        $category = 'Spain';
+                        $flag = 'https://media.api-sports.io/flags/es.svg';
+                    } elseif (str_contains($key, 'germany') || str_contains($key, 'bundesliga')) {
+                        $category = 'Germany';
+                        $flag = 'https://media.api-sports.io/flags/de.svg';
+                    } elseif (str_contains($key, 'italy') || str_contains($key, 'serie_a')) {
+                        $category = 'Italy';
+                        $flag = 'https://media.api-sports.io/flags/it.svg';
+                    } elseif (str_contains($key, 'france') || str_contains($key, 'ligue')) {
+                        $category = 'France';
+                        $flag = 'https://media.api-sports.io/flags/fr.svg';
+                    }
+                }
             } else {
-                $country = $item['league']['country'] ?? 'World';
-                $flag = $item['league']['flag'] ?? null;
+                // Non-soccer SofaScore categories
+                if (str_contains($key, 'tennis')) {
+                    $category = 'Tennis';
+                    $flag = null;
+                    if (str_contains($key, 'atp')) $cleanLeague = 'ATP';
+                    elseif (str_contains($key, 'wta')) $cleanLeague = 'WTA';
+                } elseif (str_contains($key, 'basketball')) {
+                    $category = 'Basketball';
+                    $flag = null;
+                    if (str_contains($key, 'nba')) $cleanLeague = 'NBA';
+                } elseif (str_contains($key, 'americanfootball')) {
+                    $category = 'American Football';
+                    $flag = null;
+                    if (str_contains($key, 'nfl')) $cleanLeague = 'NFL';
+                } elseif (str_contains($key, 'baseball')) {
+                    $category = 'Baseball';
+                    $flag = null;
+                    if (str_contains($key, 'mlb')) $cleanLeague = 'MLB';
+                } elseif (str_contains($key, 'icehockey')) {
+                    $category = 'Ice Hockey';
+                    $flag = null;
+                    if (str_contains($key, 'nhl')) $cleanLeague = 'NHL';
+                } elseif (str_contains($key, 'mma') || str_contains($key, 'ufc')) {
+                    $category = 'MMA';
+                    $cleanLeague = 'UFC / MMA';
+                    $flag = null;
+                } else {
+                    $category = ucfirst(explode('_', $key)[0] ?? 'Other Sports');
+                    $flag = null;
+                }
             }
 
-            if (!isset($grouped[$country])) {
-                $grouped[$country] = [
-                    'country' => $country,
+            if (!isset($grouped[$category])) {
+                $grouped[$category] = [
+                    'country' => $category,
                     'flag' => $flag,
                     'total_matches' => 0,
                     'leagues' => []
                 ];
             }
 
-            if (!isset($grouped[$country]['leagues'][$leagueId])) {
-                $grouped[$country]['leagues'][$leagueId] = [
+            $leagueId = md5($category . $cleanLeague);
+
+            if (!isset($grouped[$category]['leagues'][$leagueId])) {
+                $grouped[$category]['leagues'][$leagueId] = [
                     'id' => $leagueId,
-                    'name' => $leagueName,
-                    'logo' => $item['league']['logo'] ?? null,
+                    'name' => $cleanLeague,
+                    'logo' => null,
                     'matches' => []
                 ];
             }
 
-            $grouped[$country]['leagues'][$leagueId]['matches'][] = [
-                'id' => $item['fixture']['id'],
-                'time' => substr($item['fixture']['date'], 11, 5),
-                'status' => $item['fixture']['status']['short'],
-                'home' => $item['teams']['home']['name'],
-                'away' => $item['teams']['away']['name'],
-                'home_logo' => $item['teams']['home']['logo'] ?? null,
-                'away_logo' => $item['teams']['away']['logo'] ?? null,
-                'home_score' => $item['goals']['home'],
-                'away_score' => $item['goals']['away']
+            $grouped[$category]['leagues'][$leagueId]['matches'][] = [
+                'id' => $f->id,
+                'time' => $matchTime,
+                'status' => $status,
+                'home' => $homeName,
+                'away' => $awayName,
+                'home_logo' => $homeLogo,
+                'away_logo' => $awayLogo,
+                'home_score' => $homeScore,
+                'away_score' => $awayScore,
+                'odds_home' => number_format($f->odds_home, 2),
+                'odds_draw' => ($f->odds_draw && $f->odds_draw > 0) ? number_format($f->odds_draw, 2) : null,
+                'odds_away' => number_format($f->odds_away, 2),
+                'prob_home' => round($f->prob_home * 100),
+                'prob_draw' => round($f->prob_draw * 100),
+                'prob_away' => round($f->prob_away * 100),
+                'pred_score' => $f->pred_score ?? '1 - 0',
+                'market_1_label' => $f->market_1_label ?? 'Market',
+                'market_1_val' => $f->market_1_val ?? '-',
+                'bookmaker' => $f->bookmaker ?? 'Global',
+                'is_value_bet' => (bool)$f->is_value_bet,
+                'stake' => number_format($f->stake, 2),
+                'is_soccer' => $isSoccer
             ];
 
-            $grouped[$country]['total_matches']++;
+            $grouped[$category]['total_matches']++;
         }
 
         $result = array_values($grouped);
-       usort($result, fn($a, $b) => strcasecmp($a['country'], $b['country']));
+        usort($result, fn($a, $b) => strcasecmp($a['country'], $b['country']));
 
         return response()->json($result);
     }

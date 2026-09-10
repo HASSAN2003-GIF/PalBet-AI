@@ -15,7 +15,11 @@ class BettingRiskEngine:
     def calculate_edge(self, true_prob, decimal_odds):
         return (true_prob * decimal_odds) - 1.0
 
-    def calculate_kelly_stake(self, true_prob, decimal_odds, kelly_fraction=0.25):
+def calculate_kelly_stake(self, true_prob, decimal_odds, kelly_fraction=0.25):
+        # 🟢 FIX: Prevent Division by Zero on massive mismatches (1.00 odds)
+        if decimal_odds <= 1.0:
+            return 0.0
+            
         b = decimal_odds - 1.0
         q = 1.0 - true_prob
         full_kelly = (b * true_prob - q) / b
