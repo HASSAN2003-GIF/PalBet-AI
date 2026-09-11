@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Http;
 class UpdateFixtures extends Command
 {
     protected $signature = 'app:update-fixtures';
-    protected $description = 'Dynamically fetches all active global sports, runs the Python risk engine, and stores fixtures.';
+    protected $description = 'Unconstrained: Dynamically fetches all global sports, runs the Python engine, and stores fixtures.';
 
     public function handle()
     {
@@ -25,9 +25,7 @@ class UpdateFixtures extends Command
         }
 
         $this->info("1. Asking The Odds API for all active global sports...");
-
-        // Fetch every active sport currently offered by global bookmakers
-        $response = Http::get('https://api.the-odds-api.com/v4/sports', [
+        $response = Http::timeout(60)->get('https://api.the-odds-api.com/v4/sports', [
             'apiKey' => $apiKey
         ]);
 
@@ -37,14 +35,12 @@ class UpdateFixtures extends Command
         }
 
         $allSports = $response->json();
-        
-        $this->info("Found " . count($allSports) . " active global sports/leagues. Starting Risk Engine pipeline...");
+        $this->info("Found " . count($allSports) . " active global sports. Commencing unconstrained scout...");
 
         foreach ($allSports as $sportObj) {
             $sport = $sportObj['key'];
             $this->info("Scouting: {$sport}");
             
-            // 120s timeout allows the engine to process massive global leagues
             $process = new Process([$pythonBinary, $scriptPath, '--json', $apiKey, 'odds', $sport]);
             $process->setTimeout(120); 
             $process->run();
@@ -95,7 +91,6 @@ class UpdateFixtures extends Command
                 $this->error("Engine failed for {$sport}: " . $process->getErrorOutput());
             }
         }
-
         $this->info("✅ Global database updated successfully.");
     }
 }

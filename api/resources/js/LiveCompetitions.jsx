@@ -1,92 +1,66 @@
 import React, { useState, useEffect } from 'react';
 
-export default function LiveCompetitions({ schedule, activeLeagueId, onLeagueSelect }) {
-    const [expandedCountries, setExpandedCountries] = useState({});
+export default function LiveCompetitions({ data, activeLeagueId, onSelect }) {
+    const [expandedSport, setExpandedSport] = useState('');
+    const [expandedCategory, setExpandedCategory] = useState('');
 
-    // Auto-expand the first category on initial load
     useEffect(() => {
-        if (schedule?.length > 0 && Object.keys(expandedCountries).length === 0) {
-            setExpandedCountries({ [schedule[0].country]: true });
+        if (data?.length > 0 && !expandedSport) {
+            setExpandedSport(data[0].sport);
+            setExpandedCategory(data[0].categories[0]?.name || '');
         }
-    }, [schedule]);
+    }, [data]);
 
-    const toggleCountry = (countryName) => {
-        setExpandedCountries(prev => ({
-            ...prev,
-            [countryName]: !prev[countryName]
-        }));
-    };
-
-    if (!schedule || schedule.length === 0) {
-        return (
-            <div className="p-5 text-[11px] text-[#707A8D] font-bold uppercase tracking-wider text-center">
-                Loading competitions…
-            </div>
-        );
-    }
+    if (!data || data.length === 0) return <div className="p-4 text-xs text-[#707A8D] font-bold uppercase text-center">Loading Data...</div>;
 
     return (
-        <div className="w-full text-[#F5F7FA] overflow-y-auto px-2 py-3 space-y-1">
-            {schedule.map((group) => {
-                const isExpanded = !!expandedCountries[group.country];
-                const leaguesList = Object.values(group.leagues || {});
+        <div className="w-full text-sm text-[#8B95A7] px-2 py-2">
+            {data.map(sport => (
+                <div key={sport.sport} className="mb-2">
+                    {/* TIER 1: SPORT */}
+                    <button onClick={() => setExpandedSport(sport.sport === expandedSport ? '' : sport.sport)}
+                            className={`w-full flex justify-between items-center px-4 py-2.5 rounded-xl font-bold transition ${expandedSport === sport.sport ? 'bg-[#1E293B] text-white' : 'hover:bg-[#151B24]'}`}>
+                        <span className="uppercase tracking-wider text-xs">{sport.sport}</span>
+                        <span className={`text-[10px] transition-transform ${expandedSport === sport.sport ? 'rotate-180' : ''}`}>▼</span>
+                    </button>
 
-                return (
-                    <div key={group.country} className="rounded-xl overflow-hidden bg-[#10151D] border border-[#202936] mb-1.5 transition-all">
-                        <button
-                            type="button"
-                            onClick={() => toggleCountry(group.country)}
-                            className="w-full flex items-center justify-between p-3 hover:bg-[#151B24] transition text-left"
-                        >
-                            <div className="flex items-center gap-3 truncate">
-                                {group.flag ? (
-                                    <img src={group.flag} alt="" className="w-4 h-4 rounded-full object-cover shrink-0 border border-white/10" />
-                                ) : (
-                                    <span className="w-4 h-4 rounded-full bg-[#1A222D] flex items-center justify-center text-[10px] shrink-0 text-[#2FD3C6]">
-                                        🌐
-                                    </span>
-                                )}
-                                <span className="font-extrabold text-[#F5F7FA] text-xs uppercase tracking-wider truncate">
-                                    {group.country}
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                                <span className="bg-[#1A222D] text-[#8B95A7] font-black px-2 py-0.5 rounded-md text-[10px]">
-                                    {group.total_matches}
-                                </span>
-                                <span className={`text-[#535D70] text-[10px] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>
-                                    ▼
-                                </span>
-                            </div>
-                        </button>
+                    {expandedSport === sport.sport && (
+                        <div className="mt-1 space-y-1">
+                            {sport.categories.map(cat => (
+                                <div key={cat.name} className="bg-[#10151D] rounded-lg overflow-hidden border border-[#202936]">
+                                    {/* TIER 2: COUNTRY/REGION */}
+                                    <button onClick={() => setExpandedCategory(cat.name === expandedCategory ? '' : cat.name)}
+                                            className="w-full flex justify-between items-center px-3 py-2 hover:bg-[#151B24] transition">
+                                        <div className="flex gap-2 items-center truncate">
+                                            {cat.flag ? <img src={cat.flag} className="w-3.5 h-3.5 rounded-full object-cover border border-[#202936] shrink-0"/> : <span className="text-[10px]">🌍</span>}
+                                            <span className="text-xs font-semibold text-white truncate">{cat.name}</span>
+                                        </div>
+                                        <span className="text-[9px] font-black bg-[#1A222D] text-[#707A8D] px-1.5 py-0.5 rounded">{cat.total_matches}</span>
+                                    </button>
 
-                        {isExpanded && (
-                            <div className="bg-[#0B0F15] px-2 py-1.5 space-y-1 border-t border-[#202936]">
-                                {leaguesList.map((league) => {
-                                    const isActive = activeLeagueId === league.id;
-                                    return (
-                                        <button
-                                            key={league.id}
-                                            type="button"
-                                            onClick={() => onLeagueSelect(league, group.country)}
-                                            className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-bold transition text-left ${
-                                                isActive
-                                                    ? 'bg-[#2FD3C6]/15 text-[#2FD3C6] border border-[#2FD3C6]/30'
-                                                    : 'text-[#8B95A7] hover:bg-[#151B24] hover:text-white'
-                                            }`}
-                                        >
-                                            <span className="truncate">{league.name}</span>
-                                            <span className="text-[10px] font-medium opacity-60">
-                                                {league.matches?.length || 0}
-                                            </span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                );
-            })}
+                                    {/* TIER 3: LEAGUES */}
+                                    {expandedCategory === cat.name && (
+                                        <div className="bg-[#0B0F15] px-2 py-1.5 border-t border-[#202936] space-y-0.5">
+                                            {cat.leagues.map(league => {
+                                                const isActive = activeLeagueId === league.id;
+                                                return (
+                                                    <button key={league.id} onClick={() => onSelect(sport.sport, cat.name, league)}
+                                                            className={`w-full text-left px-2 py-1.5 text-[11px] font-bold rounded transition ${isActive ? 'text-[#2FD3C6] bg-[#2FD3C6]/10' : 'text-[#8B95A7] hover:text-white hover:bg-[#151B24]'}`}>
+                                                        <div className="flex justify-between items-center">
+                                                            <span className="truncate">{league.name}</span>
+                                                            <span className="opacity-50 font-medium">{league.matches?.length}</span>
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            ))}
         </div>
     );
 }

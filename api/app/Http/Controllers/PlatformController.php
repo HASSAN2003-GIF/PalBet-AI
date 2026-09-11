@@ -2,497 +2,278 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Bet;
-use App\Models\User;
-use Carbon\Carbon;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Symfony\Component\Process\Process;
+use App\Models\Fixture;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
+use Symfony\Component\Process\Process;
+use Illuminate\Support\Facades\Log;
 
 class PlatformController extends Controller
 {
-    /**
-     * Record a platform visit for the current day.
-     *
-     * The existing daily_metrics table is intentionally used so the
-     * frontend contract and database architecture remain unchanged.
-     */
-    public function trackVisit(): JsonResponse
-    {
-        $today = today()->toDateString();
-
-        DB::transaction(function () use ($today): void {
-            $metric = DB::table('daily_metrics')
-                ->where('date', $today)
-                ->lockForUpdate()
-                ->first();
-
-            if ($metric) {
-                DB::table('daily_metrics')
-                    ->where('date', $today)
-                    ->increment('visitors');
-                return;
-            }
-
-            DB::table('daily_metrics')->insert([
-                'date' => $today,
-                'visitors' => 1,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        });
-
-        return response()->json([
-            'status' => 'tracked',
-        ]);
-    }
-
-    /**
-     * Authenticate an existing player or create a new player account.
-     *
-     * The current phone-as-email identity convention is preserved because
-     * other parts of the application already depend on it.
-     */
-    public function authenticate(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'phone' => ['required', 'string', 'max:30'],
-            'password' => ['nullable', 'string', 'max:255'],
-            'role' => ['nullable', 'string', 'in:player,admin'],
-        ]);
-
-        $phone = trim($validated['phone']);
-        $role = $validated['role'] ?? 'player';
-        $email = $phone . '@palbet.local';
-
-        $user = User::where('email', $email)->first();
-
-        if (!$user) {
-            $user = User::create([
-                'name' => 'Player',
-                'email' => $email,
-                'password' => bcrypt($validated['password'] ?? ''),
-            ]);
-
-            $action = 'Created account';
-            $color = 'bg-sky-100 text-sky-600';
-        } else {
-            $action = 'Logged in';
-            $color = 'bg-emerald-100 text-emerald-600';
-        }
-
-        $this->logActivity($phone, $action, $color);
-
-        return response()->json([
-            'id' => $user->id,
-            'role' => $role,
-            'phone' => $phone,
-            'balanceUsd' => $role === 'admin' ? 0 : (float) $user->balance,
-        ]);
-    }
-
-    /**
-     * Place a bet and deduct the stake from the user's balance.
-     *
-     * The operation is transactional so the balance update and bet creation
-     * succeed or fail together.
-     */
-    public function placeBet(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'phone' => ['required', 'string', 'max:30'],
-            'stake' => ['required', 'numeric', 'gt:0'],
-            'totalOdds' => ['required', 'numeric', 'gte:1'],
-            'potentialPayout' => ['required', 'numeric', 'gte:0'],
-            'slip' => ['required'],
-        ]);
-
-        $phone = trim($validated['phone']);
-        $stake = (float) $validated['stake'];
-
-        $user = User::where('email', $phone . '@palbet.local')->first();
-
-        if (!$user) {
-            return response()->json([
-                'error' => 'User session is invalid. Please sign in again.',
-            ], 401);
-        }
-
-        if ((float) $user->balance < $stake) {
-            return response()->json([
-                'error' => 'Insufficient funds. Please lower your stake.',
-            ], 400);
-        }
-
-        $newBalance = DB::transaction(function () use ($user, $stake, $validated, $phone): float {
-            $lockedUser = User::whereKey($user->id)
-                ->lockForUpdate()
-                ->firstOrFail();
-
-            if ((float) $lockedUser->balance < $stake) {
-                abort(response()->json([
-                    'error' => 'Insufficient funds. Please lower your stake.',
-                ], 400));
-            }
-
-            $lockedUser->balance = (float) $lockedUser->balance - $stake;
-            $lockedUser->save();
-
-            Bet::create([
-                'user_id' => $lockedUser->id,
-                'stake' => $stake,
-                'total_odds' => (float) $validated['totalOdds'],
-                'potential_payout' => (float) $validated['potentialPayout'],
-                'matches' => $validated['slip'],
-            ]);
-
-            $this->logActivity(
-                $phone,
-                'Placed bet',
-                'bg-amber-100 text-amber-600'
-            );
-
-            return (float) $lockedUser->balance;
-        });
-
-        return response()->json([
-            'status' => 'success',
-            'newBalance' => $newBalance,
-        ]);
-    }
-
-    /**
-     * Return the authenticated user's betting history.
-     *
-     * The existing `user_id` query parameter is preserved for compatibility
-     * with the current frontend.
-     */
-    public function myBets(Request $request): JsonResponse
-    {
-        $userId = $request->query('user_id');
-
-        if (!$userId) {
-            return response()->json([
-                'data' => [],
-            ]);
-        }
-
-        $bets = Bet::where('user_id', $userId)
-            ->latest()
-            ->get()
-            ->map(function (Bet $bet): array {
-                return [
-                    'id' => $bet->id,
-                    'stake' => (float) $bet->stake,
-                    'total_odds' => (float) $bet->total_odds,
-                    'potential_payout' => (float) $bet->potential_payout,
-                    'matches' => $bet->matches,
-                    'date' => Carbon::parse($bet->created_at)->format('M d, Y - h:i A'),
-                ];
-            });
-
-        return response()->json([
-            'data' => $bets,
-        ]);
-    }
-
-    /**
-     * Provide the existing admin dashboard statistics.
-     */
-    public function adminStats(): JsonResponse
-    {
-        $today = today();
-
-        $realUserCount = User::count();
-
-        $todayVisits = (int) (
-            DB::table('daily_metrics')
-                ->where('date', $today->toDateString())
-                ->value('visitors') ?? 0
-        );
-
-        $loggedInToday = DB::table('activity_logs')
-            ->where('action', 'Logged in')
-            ->whereDate('created_at', $today)
-            ->distinct()
-            ->count('phone');
-
-        $activeNow = DB::table('activity_logs')
-            ->where('created_at', '>=', now()->subMinutes(15))
-            ->distinct()
-            ->count('phone');
-
-        $chartData = collect(range(6, 0))
-            ->map(function (int $daysAgo): array {
-                $date = today()->subDays($daysAgo);
-
-                $visits = (int) (
-                    DB::table('daily_metrics')
-                        ->where('date', $date->toDateString())
-                        ->value('visitors') ?? 0
-                );
-
-                return [
-                    'day' => $date->format('D'),
-                    'visits' => $visits,
-                    'height' => $this->getChartHeight($visits),
-                ];
-            })
-            ->values()
-            ->all();
-
-        $activities = DB::table('activity_logs')
-            ->latest('id')
-            ->limit(5)
-            ->get()
-            ->map(function ($log): array {
-                return [
-                    'phone' => $log->phone,
-                    'action' => $log->action,
-                    'time' => Carbon::parse($log->created_at)
-                        ->diffForHumans(null, true) . ' ago',
-                    'color' => $log->color,
-                ];
-            });
-
-        return response()->json([
-            'totalAccounts' => $realUserCount,
-            'loggedIn' => $loggedInToday,
-            // Preserve the frontend's expectation that the dashboard never
-            // renders zero for the current active-user indicator.
-            'activeNow' => max(1, $activeNow),
-            'todayVisits' => $todayVisits,
-            'chartData' => $chartData,
-            'activityFeed' => $activities,
-        ]);
-    }
-
-    /**
-     * Send a prediction/chat request to the existing Python AI engine.
-     *
-     * The Python integration contract remains unchanged.
-     */
+    // ==========================================
+    // AI AGENT INTEGRATION (Restored)
+    // ==========================================
     public function askAI(Request $request)
     {
-        $matchContext = $request->input('match');
-        $userMessage = $request->input('message');
-        $history = $request->input('history', []);
-        
-        $apiKey = env('GEMINI_API_KEY', 'null');
-        // 🟢 Grab the new Football API key from the .env
-        $footballKey = env('FOOTBALL_API_KEY', 'null'); 
+        // FIX: Accept the full array context
+        $matchContext = $request->input('matchContext');
+        $message = $request->input('message');
 
-        $pythonBinary = base_path('../venv/bin/python3');
-        $scriptPath = base_path('../ai_agent.py');
-        $process = new \Symfony\Component\Process\Process([$pythonBinary, $scriptPath]);
-        
-        // 🟢 Pass BOTH keys into the payload
-        $process->setInput(json_encode([
-            'api_key' => $apiKey,
-            'football_key' => $footballKey, 
-            'match' => $matchContext,
-            'history' => $history,
-            'message' => $userMessage
-        ]));
-        
-        $process->setTimeout(60);
-        $process->run();
-
-        if ($process->isSuccessful()) {
-            $output = json_decode($process->getOutput(), true);
-            return response()->json(['response' => $output['response'] ?? 'I could not synthesize an answer.']);
+        if (!$matchContext || !$message) {
+            return response()->json(['error' => 'Missing match context or message payload'], 400);
         }
 
-        return response()->json(['response' => 'AI engine communication error.'], 500);
+        $pythonBinary = base_path('../venv/bin/python3');
+        if (!file_exists($pythonBinary)) {
+            $pythonBinary = 'python3'; 
+        }
+        $scriptPath = base_path('../ai_agent.py');
+
+        try {
+            // FIX: Safely pass the JSON encoded data to the Python agent
+            $process = new Process([$pythonBinary, $scriptPath, '--chat', json_encode($matchContext), $message]);
+            $process->setTimeout(45); // Extended timeout for quality LLM generation
+            $process->run();
+
+            if (!$process->isSuccessful()) {
+                Log::error('AI Agent Failure: ' . $process->getErrorOutput());
+                return response()->json(['error' => 'The AI Analyst is currently offline.'], 503);
+            }
+
+            $output = trim($process->getOutput());
+            $parsed = json_decode($output, true);
+            
+            return response()->json([
+                'response' => $parsed['response'] ?? $output
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('AI Agent Exception: ' . $e->getMessage());
+            return response()->json(['error' => 'Internal AI processing error.'], 500);
+        }
     }
-    
-  public function getDailySchedule(Request $request)
+
+    // ==========================================
+    // DAILY SCHEDULE & MERGE ENGINE
+    // ==========================================
+    public function getDailySchedule(Request $request)
     {
         $date = $request->query('date', now()->format('Y-m-d'));
 
-        // 1. Fetch risk engine database records (3-day buffer to prevent timezone cutoff)
         $start = \Carbon\Carbon::parse($date)->subDays(1)->format('Y-m-d');
         $end = \Carbon\Carbon::parse($date)->addDays(1)->format('Y-m-d');
-        $dbFixtures = \App\Models\Fixture::whereBetween('date_str', [$start, $end])->get();
+        $dbFixtures = Fixture::whereBetween('date_str', [$start, $end])->get();
 
-        // 2. Fetch live structural feed from API-Sports for logos, live scores, and country flags
-        $apiFixtures = \Illuminate\Support\Facades\Cache::remember("api_fixtures_{$date}", now()->addMinutes(15), function () use ($date) {
-            $response = \Illuminate\Support\Facades\Http::withHeaders([
-                'x-apisports-key' => env('FOOTBALL_API_KEY')
-            ])->timeout(120)->get('https://v3.football.api-sports.io/fixtures', ['date' => $date]);
-
-            return $response->successful() ? ($response->json()['response'] ?? []) : [];
+        $apiFixtures = Cache::remember("api_fixtures_{$date}", now()->addMinutes(15), function () use ($date) {
+            $response = Http::withHeaders(['x-apisports-key' => env('FOOTBALL_API_KEY')])
+                ->timeout(60)->get('https://v3.football.api-sports.io/fixtures', ['date' => $date]);
+            
+            $data = $response->json();
+            return (is_array($data) && isset($data['response']) && is_array($data['response'])) ? $data['response'] : [];
         });
 
         $normalize = function ($str) {
-            $str = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $str) ?: $str;
-            return preg_replace('/[^a-z0-9]/', '', strtolower(trim($str)));
+            $str = Str::ascii((string)$str);
+            $str = strtolower(trim($str));
+            $stopWords = ['1. ', ' fc', 'fc ', ' cf', 'cf ', 'real ', ' club', ' de ', ' sporting', ' united', ' city', ' athletic', ' balompie', '04', '05'];
+            $str = str_replace($stopWords, ' ', $str);
+            return preg_replace('/[^a-z0-9]/', '', $str);
         };
 
-        $grouped = [];
+        // NEW: Dynamic SVG Logo Generator for Non-Football Sports
+        $generateAvatar = function ($teamName) {
+            $cleanName = trim(preg_replace('/[^a-zA-Z0-9\s]/', '', (string)$teamName));
+            if (empty($cleanName)) $cleanName = 'TBA';
+            
+            // Hash the name to generate a consistent, unique hex color for this specific team
+            $hash = md5($cleanName);
+            $bg = substr($hash, 0, 6); 
+            $urlName = urlencode($cleanName);
+            
+            // Return a professional SVG badge
+            return "https://ui-avatars.com/api/?name={$urlName}&background={$bg}&color=fff&bold=true&format=svg";
+        };
 
-        foreach ($dbFixtures as $f) {
-            $key = strtolower($f->sport_key);
-            $isSoccer = $f->is_soccer || str_contains($key, 'soccer');
+        $mergedMap = [];
+        $unmatchedApi = [];
+        
+        foreach ($apiFixtures as $item) {
+            if (!is_array($item)) continue;
+            
+            $h = $normalize(data_get($item, 'teams.home.name', ''));
+            $a = $normalize(data_get($item, 'teams.away.name', ''));
+            $hash = $h . '_' . $a;
 
-            $homeName = $f->home_team;
-            $awayName = $f->away_team;
-            $homeLogo = $f->home_logo;
-            $awayLogo = $f->away_logo;
-            $status = 'NS';
-            $homeScore = null;
-            $awayScore = null;
-            $matchTime = $f->commence_time ? $f->commence_time->format('H:i') : '19:00';
+            $country = data_get($item, 'league.country', 'World');
+            $flag = data_get($item, 'league.flag');
+            if ($country === 'World') $country = 'International Clubs';
+            if ($country === 'Europe' || $country === 'International Clubs') $flag = 'https://media.api-sports.io/flags/eu.svg';
 
-            // Clean league name
-            $cleanLeague = ucwords(str_replace([
-                'soccer_', 'basketball_', 'tennis_', 'americanfootball_', 'baseball_',
-                'icehockey_', 'mma_', 'rugbyleague_', 'rugbyunion_', 'aussierules_', '_'
-            ], ['', '', '', '', '', '', '', '', '', '', ' '], $key));
-
-            if ($isSoccer) {
-                $category = 'International Clubs';
-                $flag = 'https://media.api-sports.io/flags/eu.svg';
-
-                $normH = $normalize($homeName);
-                $normA = $normalize($awayName);
-                $bestScore = 0;
-                $matchedApi = null;
-
-                // Fuzzy match against API-Sports to retrieve official crests and flags
-                foreach ($apiFixtures as $apiItem) {
-                    $apiH = $normalize($apiItem['teams']['home']['name']);
-                    $apiA = $normalize($apiItem['teams']['away']['name']);
-
-                    similar_text($normH, $apiH, $simH);
-                    similar_text($normA, $apiA, $simA);
-                    $score = ($simH + $simA) / 2;
-
-                    if ($score > 65 && $score > $bestScore) {
-                        $bestScore = $score;
-                        $matchedApi = $apiItem;
-                    }
-                }
-
-                if ($matchedApi) {
-                    $homeLogo = $matchedApi['teams']['home']['logo'];
-                    $awayLogo = $matchedApi['teams']['away']['logo'];
-                    $status = $matchedApi['fixture']['status']['short'];
-                    $homeScore = $matchedApi['goals']['home'];
-                    $awayScore = $matchedApi['goals']['away'];
-                    $matchTime = substr($matchedApi['fixture']['date'], 11, 5);
-                    $cleanLeague = $matchedApi['league']['name'];
-
-                    $c = $matchedApi['league']['country'] ?? 'World';
-                    $category = ($c === 'World') ? 'International Clubs' : $c;
-                    $flag = $matchedApi['league']['flag'] ?? null;
-                    if ($category === 'Europe' || $category === 'International Clubs') {
-                        $flag = 'https://media.api-sports.io/flags/eu.svg';
-                    }
-                } else {
-                    if (str_contains($key, 'epl') || str_contains($key, 'england')) {
-                        $category = 'England';
-                        $flag = 'https://media.api-sports.io/flags/gb.svg';
-                    } elseif (str_contains($key, 'spain') || str_contains($key, 'la_liga')) {
-                        $category = 'Spain';
-                        $flag = 'https://media.api-sports.io/flags/es.svg';
-                    } elseif (str_contains($key, 'germany') || str_contains($key, 'bundesliga')) {
-                        $category = 'Germany';
-                        $flag = 'https://media.api-sports.io/flags/de.svg';
-                    } elseif (str_contains($key, 'italy') || str_contains($key, 'serie_a')) {
-                        $category = 'Italy';
-                        $flag = 'https://media.api-sports.io/flags/it.svg';
-                    } elseif (str_contains($key, 'france') || str_contains($key, 'ligue')) {
-                        $category = 'France';
-                        $flag = 'https://media.api-sports.io/flags/fr.svg';
-                    }
-                }
-            } else {
-                // Non-soccer SofaScore categories
-                if (str_contains($key, 'tennis')) {
-                    $category = 'Tennis';
-                    $flag = null;
-                    if (str_contains($key, 'atp')) $cleanLeague = 'ATP';
-                    elseif (str_contains($key, 'wta')) $cleanLeague = 'WTA';
-                } elseif (str_contains($key, 'basketball')) {
-                    $category = 'Basketball';
-                    $flag = null;
-                    if (str_contains($key, 'nba')) $cleanLeague = 'NBA';
-                } elseif (str_contains($key, 'americanfootball')) {
-                    $category = 'American Football';
-                    $flag = null;
-                    if (str_contains($key, 'nfl')) $cleanLeague = 'NFL';
-                } elseif (str_contains($key, 'baseball')) {
-                    $category = 'Baseball';
-                    $flag = null;
-                    if (str_contains($key, 'mlb')) $cleanLeague = 'MLB';
-                } elseif (str_contains($key, 'icehockey')) {
-                    $category = 'Ice Hockey';
-                    $flag = null;
-                    if (str_contains($key, 'nhl')) $cleanLeague = 'NHL';
-                } elseif (str_contains($key, 'mma') || str_contains($key, 'ufc')) {
-                    $category = 'MMA';
-                    $cleanLeague = 'UFC / MMA';
-                    $flag = null;
-                } else {
-                    $category = ucfirst(explode('_', $key)[0] ?? 'Other Sports');
-                    $flag = null;
-                }
-            }
-
-            if (!isset($grouped[$category])) {
-                $grouped[$category] = [
-                    'country' => $category,
-                    'flag' => $flag,
-                    'total_matches' => 0,
-                    'leagues' => []
-                ];
-            }
-
-            $leagueId = md5($category . $cleanLeague);
-
-            if (!isset($grouped[$category]['leagues'][$leagueId])) {
-                $grouped[$category]['leagues'][$leagueId] = [
-                    'id' => $leagueId,
-                    'name' => $cleanLeague,
-                    'logo' => null,
-                    'matches' => []
-                ];
-            }
-
-            $grouped[$category]['leagues'][$leagueId]['matches'][] = [
-                'id' => $f->id,
-                'time' => $matchTime,
-                'status' => $status,
-                'home' => $homeName,
-                'away' => $awayName,
-                'home_logo' => $homeLogo,
-                'away_logo' => $awayLogo,
-                'home_score' => $homeScore,
-                'away_score' => $awayScore,
-                'odds_home' => number_format($f->odds_home, 2),
-                'odds_draw' => ($f->odds_draw && $f->odds_draw > 0) ? number_format($f->odds_draw, 2) : null,
-                'odds_away' => number_format($f->odds_away, 2),
-                'prob_home' => round($f->prob_home * 100),
-                'prob_draw' => round($f->prob_draw * 100),
-                'prob_away' => round($f->prob_away * 100),
-                'pred_score' => $f->pred_score ?? '1 - 0',
-                'market_1_label' => $f->market_1_label ?? 'Market',
-                'market_1_val' => $f->market_1_val ?? '-',
-                'bookmaker' => $f->bookmaker ?? 'Global',
-                'is_value_bet' => (bool)$f->is_value_bet,
-                'stake' => number_format($f->stake, 2),
-                'is_soccer' => $isSoccer
+            $matchData = [
+                'source' => 'api',
+                'sport' => 'Football',
+                'category' => $country,
+                'flag' => $flag,
+                'league' => data_get($item, 'league.name', 'Unknown League'),
+                'match' => [
+                    'id' => 'api_' . data_get($item, 'fixture.id', rand(1000,9999)),
+                    'time' => data_get($item, 'fixture.date') ? substr(data_get($item, 'fixture.date'), 11, 5) : 'TBA',
+                    'status' => data_get($item, 'fixture.status.short', 'NS'),
+                    'home' => data_get($item, 'teams.home.name', 'Unknown'),
+                    'away' => data_get($item, 'teams.away.name', 'Unknown'),
+                    'home_logo' => data_get($item, 'teams.home.logo'),
+                    'away_logo' => data_get($item, 'teams.away.logo'),
+                    'home_score' => data_get($item, 'goals.home'),
+                    'away_score' => data_get($item, 'goals.away'),
+                    'odds_home' => '-', 'odds_draw' => '-', 'odds_away' => '-',
+                    'prob_home' => 0, 'prob_draw' => 0, 'prob_away' => 0,
+                    'pred_score' => '-', 'market_1_label' => '-', 'market_1_val' => '-',
+                    'bookmaker' => '-', 'is_value_bet' => false, 'stake' => '0.00', 'is_soccer' => true,
+                    'has_odds' => false
+                ]
             ];
-
-            $grouped[$category]['total_matches']++;
+            
+            $mergedMap[$hash] = $matchData;
+            $unmatchedApi[$hash] = $hash; 
         }
 
-        $result = array_values($grouped);
-        usort($result, fn($a, $b) => strcasecmp($a['country'], $b['country']));
+        foreach ($dbFixtures as $f) {
+            $key = strtolower($f->sport_key ?? 'other');
+            $isSoccer = $f->is_soccer || str_contains($key, 'soccer');
+            
+            $h = $normalize($f->home_team);
+            $a = $normalize($f->away_team);
+            $hash = $h . '_' . $a;
 
-        return response()->json($result);
+            $matchFound = false;
+            $matchedKey = null;
+
+            if ($isSoccer && isset($mergedMap[$hash])) {
+                $matchFound = true;
+                $matchedKey = $hash;
+                unset($unmatchedApi[$hash]);
+            } 
+            elseif ($isSoccer) {
+                $bestScore = 0;
+                $bestKey = null;
+                foreach ($unmatchedApi as $apiKey) {
+                    similar_text($hash, $apiKey, $sim);
+                    if ($sim > 80 && $sim > $bestScore) { 
+                        $bestScore = $sim;
+                        $bestKey = $apiKey;
+                    }
+                }
+                if ($bestKey) {
+                    $matchFound = true;
+                    $matchedKey = $bestKey;
+                    unset($unmatchedApi[$bestKey]);
+                }
+            }
+
+            $safeTime = 'TBA';
+            try { 
+                if (!empty($f->commence_time)) {
+                    $safeTime = \Carbon\Carbon::parse($f->commence_time)->format('H:i'); 
+                }
+            } catch (\Exception $e) {}
+
+            if ($matchFound && $matchedKey) {
+                $m = &$mergedMap[$matchedKey]['match'];
+                
+                $m['id'] = $f->id;
+                $m['odds_home'] = number_format((float)$f->odds_home, 2);
+                $m['odds_draw'] = (float)$f->odds_draw > 0 ? number_format((float)$f->odds_draw, 2) : '-';
+                $m['odds_away'] = number_format((float)$f->odds_away, 2);
+                $m['prob_home'] = round((float)$f->prob_home * 100);
+                $m['prob_draw'] = round((float)$f->prob_draw * 100);
+                $m['prob_away'] = round((float)$f->prob_away * 100);
+                $m['pred_score'] = $f->pred_score ?? '-';
+                $m['market_1_label'] = $f->market_1_label ?? 'Market';
+                $m['market_1_val'] = $f->market_1_val ?? '-';
+                $m['bookmaker'] = $f->bookmaker ?? 'Global';
+                $m['is_value_bet'] = (bool)$f->is_value_bet;
+                $m['stake'] = number_format((float)$f->stake, 2);
+                $m['has_odds'] = true;
+                
+                // If matched but official logo is missing, generate one
+                if (empty($m['home_logo'])) $m['home_logo'] = $generateAvatar($m['home']);
+                if (empty($m['away_logo'])) $m['away_logo'] = $generateAvatar($m['away']);
+                
+                unset($m);
+            } else {
+                if ($f->date_str !== $date) { continue; }
+
+                $keyParts = explode('_', $key);
+                $rawSport = $keyParts[0] ?? 'other';
+                
+                $sportGroup = ucwords(str_replace(['americanfootball', 'icehockey', 'rugbyleague', 'rugbyunion', 'aussierules'], ['American Football', 'Ice Hockey', 'Rugby', 'Rugby', 'Aussie Rules'], $rawSport));
+                if (strtolower($sportGroup) === 'soccer') $sportGroup = 'Football';
+                
+                $category = 'Global';
+                if (isset($keyParts[1])) {
+                    $category = ucwords(str_replace(['nba', 'nfl', 'mlb', 'nhl', 'mls'], ['USA (NBA)', 'USA (NFL)', 'USA (MLB)', 'USA (NHL)', 'USA (MLS)'], $keyParts[1]));
+                }
+                
+                $cleanLeague = ucwords(str_replace('_', ' ', str_replace($rawSport . '_', '', $key)));
+
+                $mergedMap['db_'.$f->id] = [
+                    'source' => 'db',
+                    'sport' => $sportGroup,
+                    'category' => $category,
+                    'flag' => null,
+                    'league' => strtoupper($cleanLeague) === $cleanLeague ? $cleanLeague : ucwords($cleanLeague),
+                    'match' => [
+                        'id' => $f->id,
+                        'time' => $safeTime,
+                        'status' => 'NS',
+                        'home' => $f->home_team ?? 'Unknown', 'away' => $f->away_team ?? 'Unknown',
+                        // INJECT GENERATIVE LOGOS HERE
+                        'home_logo' => $f->home_logo ?? $generateAvatar($f->home_team ?? 'Unknown'),
+                        'away_logo' => $f->away_logo ?? $generateAvatar($f->away_team ?? 'Unknown'),
+                        'home_score' => null, 'away_score' => null,
+                        'odds_home' => number_format((float)$f->odds_home, 2),
+                        'odds_draw' => (float)$f->odds_draw > 0 ? number_format((float)$f->odds_draw, 2) : '-',
+                        'odds_away' => number_format((float)$f->odds_away, 2),
+                        'prob_home' => round((float)$f->prob_home * 100),
+                        'prob_draw' => round((float)$f->prob_draw * 100),
+                        'prob_away' => round((float)$f->prob_away * 100),
+                        'pred_score' => $f->pred_score ?? '-',
+                        'market_1_label' => $f->market_1_label ?? 'Market', 'market_1_val' => $f->market_1_val ?? '-',
+                        'bookmaker' => $f->bookmaker ?? 'Global', 'is_value_bet' => (bool)$f->is_value_bet, 'stake' => number_format((float)$f->stake, 2),
+                        'is_soccer' => $isSoccer,
+                        'has_odds' => true
+                    ]
+                ];
+            }
+        }
+
+        $platformData = [];
+        foreach ($mergedMap as $entry) {
+            $sport = (string)$entry['sport']; $cat = (string)$entry['category']; $league = (string)$entry['league'];
+            
+            if (!isset($platformData[$sport])) $platformData[$sport] = ['sport' => $sport, 'categories' => []];
+            if (!isset($platformData[$sport]['categories'][$cat])) $platformData[$sport]['categories'][$cat] = ['name' => $cat, 'flag' => $entry['flag'], 'total_matches' => 0, 'leagues' => []];
+            
+            $lid = md5($sport.$cat.$league);
+            if (!isset($platformData[$sport]['categories'][$cat]['leagues'][$lid])) {
+                $platformData[$sport]['categories'][$cat]['leagues'][$lid] = ['id' => $lid, 'name' => $league, 'matches' => []];
+            }
+            
+            $platformData[$sport]['categories'][$cat]['leagues'][$lid]['matches'][] = $entry['match'];
+            $platformData[$sport]['categories'][$cat]['total_matches']++;
+        }
+
+        $finalOutput = array_values($platformData);
+        foreach ($finalOutput as &$s) {
+            $cats = array_values($s['categories']);
+            foreach ($cats as &$c) { $c['leagues'] = array_values($c['leagues']); }
+            usort($cats, fn($a, $b) => strcasecmp((string)($a['name'] ?? ''), (string)($b['name'] ?? '')));
+            $s['categories'] = $cats;
+        }
+        usort($finalOutput, fn($a, $b) => strcasecmp((string)($a['sport'] ?? ''), (string)($b['sport'] ?? '')));
+
+        return response()->json($finalOutput);
     }
 }
