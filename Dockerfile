@@ -24,4 +24,4 @@ RUN chown -R www-data:www-data /var/www/api/storage /var/www/api/bootstrap/cache
 COPY deploy/nginx.conf /etc/nginx/sites-available/default
 
 EXPOSE 80
-CMD ["sh", "-c", "service nginx start && php-fpm"]
+CMD ["sh", "-c", "sed -i \"s/\\${PORT}/$PORT/g\" /etc/nginx/sites-available/default && service nginx start && php-fpm"]
