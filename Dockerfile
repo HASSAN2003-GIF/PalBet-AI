@@ -15,7 +15,8 @@ WORKDIR /var/www
 COPY . .
 
 WORKDIR /var/www/api
-RUN composer install --optimize-autoloader --no-dev
+RUN mkdir -p storage/framework/cache/data storage/framework/views storage/framework/sessions bootstrap/cache
+RUN composer install --optimize-autoloader --no-dev --no-scripts
 RUN chown -R www-data:www-data /var/www/api/storage /var/www/api/bootstrap/cache
 
 COPY deploy/nginx.conf /etc/nginx/sites-available/default
