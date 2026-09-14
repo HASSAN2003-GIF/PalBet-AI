@@ -25,11 +25,15 @@ const AIChatModal = ({ match, onClose }) => {
         setMessages(prev => [...prev, { role: 'user', text: msg }]);
         setInput(''); setIsTyping(true);
         try {
-            // FIX: Pass the complete match object so the AI can read the real probabilities
-            const data = await requestJson('/api/platform/chat', { 
+            // 1. ADD THIS LINE to dynamically grab the cloud URL (or fallback to local)
+            const API_URL = import.meta.env.VITE_API_URL || '';
+            
+            // 2. CHANGE THIS LINE to use the API_URL variable
+            const data = await requestJson(`${API_URL}/api/platform/chat`, { 
                 method: 'POST', 
                 body: JSON.stringify({ matchContext: match, message: msg }) 
             });
+            
             setMessages(prev => [...prev, { role: 'ai', text: data.response || 'Analysis generated.' }]);
         } catch (err) { 
             setMessages(prev => [...prev, { role: 'ai', text: `Connection Error: ${err.message}` }]); 
