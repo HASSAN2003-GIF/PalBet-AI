@@ -4,8 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PalBet-AI</title>
+    <!-- Link the Tailwind CSS so Vite compiles it -->
+    <link rel="stylesheet" href="/resources/css/app.css" />
   </head>
   <body>
+    <!-- Include both IDs just in case React is looking for 'app' -->
+    <div id="app"></div>
     <div id="root"></div>
     <script type="module" src="/resources/js/app.jsx"></script>
   </body>
