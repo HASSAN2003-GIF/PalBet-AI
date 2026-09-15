@@ -11,7 +11,7 @@ export default function LiveCompetitions({ data, activeLeagueId, onSelect }) {
         }
     }, [data]);
 
-    if (!data || data.length === 0) return <div className="p-4 text-xs text-[#707A8D] font-bold uppercase text-center">Loading Data...</div>;
+    if (!data || data.length === 0) return <div className="p-4 text-xs text-[#707A8D] font-bold uppercase text-center">No fixtures available</div>;
 
     return (
         <div className="w-full text-sm text-[#8B95A7] px-2 py-2">
