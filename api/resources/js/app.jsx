@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import LiveCompetitions from './LiveCompetitions';
+import Admin from './Admin';
+
+// Smart API Router: Uses port 8000 locally, and the Render URL in production
+const API_URL = import.meta.env.DEV ? 'http://127.0.0.1:8000' : 'https://palbet-ai.onrender.com';
 
 const requestJson = async (url, options = {}) => {
     const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...(options.headers || {}) }});
@@ -25,10 +29,6 @@ const AIChatModal = ({ match, onClose }) => {
         setMessages(prev => [...prev, { role: 'user', text: msg }]);
         setInput(''); setIsTyping(true);
         try {
-            // 1. ADD THIS LINE to dynamically grab the cloud URL (or fallback to local)
-            const API_URL = import.meta.env.VITE_API_URL || '';
-            
-            // 2. CHANGE THIS LINE to use the API_URL variable
             const data = await requestJson(`${API_URL}/api/platform/chat`, { 
                 method: 'POST', 
                 body: JSON.stringify({ matchContext: match, message: msg }) 
@@ -170,6 +170,7 @@ function App() {
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [loading, setLoading] = useState(true);
     const [activeChatMatch, setActiveChatMatch] = useState(null);
+    const [showAdmin, setShowAdmin] = useState(false); // <-- ADDED ADMIN STATE
 
     const calendarDates = useMemo(() => {
         const dates = []; const today = new Date();
@@ -188,8 +189,8 @@ function App() {
 
     useEffect(() => {
         setLoading(true);
-        const API_URL = 'https://palbet-ai.onrender.com';
-fetch(`${API_URL}/api/schedule?date=${selectedDate}`)
+        
+        fetch(`${API_URL}/api/schedule?date=${selectedDate}`)
             .then(res => res.json())
             .then(data => {
                 const safeData = Array.isArray(data) ? data : [];
@@ -218,15 +219,34 @@ fetch(`${API_URL}/api/schedule?date=${selectedDate}`)
         return l ? l.matches : null;
     }, [apiData, activeContext]);
 
+    // <-- ADDED CONDITIONAL ADMIN ROUTING
+    if (showAdmin) {
+        return <Admin onClose={() => setShowAdmin(false)} />;
+    }
+
     return (
         <div className="flex h-screen bg-[#080B10] font-sans text-slate-100 overflow-hidden">
             {activeChatMatch && <AIChatModal match={activeChatMatch} onClose={() => setActiveChatMatch(null)} />}
 
             <aside className="w-[280px] bg-[#0B0F15] border-r border-[#202936] flex flex-col shrink-0">
-                <div className="h-16 flex items-center px-6 border-b border-[#202936] shrink-0">
+                {/* <-- MODIFIED HEADER TO INCLUDE ADMIN GEAR BUTTON --> */}
+                <div className="h-16 flex items-center justify-between px-6 border-b border-[#202936] shrink-0">
                     <span className="text-xl font-black tracking-tight text-white flex items-center gap-2">
                         <span className="w-2.5 h-2.5 rounded-full bg-[#2FD3C6]"></span>PalBet <span className="text-[#2FD3C6]">AI</span>
                     </span>
+                    <button 
+                        onClick={() => {
+                            const pass = prompt("Enter Admin Password:");
+                            if (pass) {
+                                sessionStorage.setItem('admin_key', pass);
+                                setShowAdmin(true);
+                            }
+                        }} 
+                        className="text-[#707A8D] hover:text-[#2FD3C6] transition-colors bg-[#151B24] p-1.5 rounded-md"
+                        title="Admin Dashboard"
+                    >
+                        ⚙️
+                    </button>
                 </div>
                 <div className="flex-1 overflow-y-auto">
                     <LiveCompetitions data={apiData} activeLeagueId={activeContext.league?.id} onSelect={(s, c, l) => setActiveContext({ sport: s, category: c, league: l })} />

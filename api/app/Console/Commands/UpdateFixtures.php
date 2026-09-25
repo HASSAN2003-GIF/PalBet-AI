@@ -34,7 +34,13 @@ class UpdateFixtures extends Command
             return;
         }
 
-        $allSports = $response->json();
+        $allSportsRaw = $response->json();
+        
+        // Dynamically filter the live API feed to keep ONLY football leagues.
+        // This automatically captures lower tiers, cups, and global leagues without hardcoding.
+        $allSports = array_filter($allSportsRaw, function ($sport) {
+            return str_contains(strtolower($sport['key']), 'soccer');
+        });
         $this->info("Found " . count($allSports) . " active global sports. Commencing unconstrained scout...");
 
         foreach ($allSports as $sportObj) {

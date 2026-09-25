@@ -2,6 +2,10 @@ import json
 import argparse
 import sys
 import os
+import warnings
+
+# Suppress all deprecation warnings so they don't break the JSON API contract
+warnings.filterwarnings("ignore")
 
 try:
     import google.generativeai as genai

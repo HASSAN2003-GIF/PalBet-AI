@@ -60,6 +60,13 @@ class PlatformController extends Controller
     // ==========================================
     public function getDailySchedule(Request $request)
     {
+        // 1. Log unique visitor
+        \Illuminate\Support\Facades\DB::table('visitors')->insertOrIgnore([
+            'ip_address' => $request->ip(),
+            'created_at' => now(),
+            'updated_at' => now()
+        ]);
+
         $date = $request->query('date', now()->format('Y-m-d'));
 
         $start = \Carbon\Carbon::parse($date)->subDays(1)->format('Y-m-d');
@@ -67,11 +74,8 @@ class PlatformController extends Controller
         $dbFixtures = Fixture::whereBetween('date_str', [$start, $end])->get();
 
         $apiFixtures = Cache::remember("api_fixtures_{$date}", now()->addMinutes(15), function () use ($date) {
-            $response = Http::withHeaders(['x-apisports-key' => env('FOOTBALL_API_KEY')])
-                ->timeout(60)->get('https://v3.football.api-sports.io/fixtures', ['date' => $date]);
-            
-            $data = $response->json();
-            return (is_array($data) && isset($data['response']) && is_array($data['response'])) ? $data['response'] : [];
+            // API-Sports is suspended. Forcing empty array to use DB fallback.
+            return [];
         });
 
         $normalize = function ($str) {
@@ -275,5 +279,26 @@ class PlatformController extends Controller
         usort($finalOutput, fn($a, $b) => strcasecmp((string)($a['sport'] ?? ''), (string)($b['sport'] ?? '')));
 
         return response()->json($finalOutput);
+    }
+
+    public function adminStats(Request $request)
+    {
+        // 1. Verify Admin Password
+        $adminPass = env('ADMIN_PASSWORD', 'palbet-secret-2026'); 
+        if ($request->header('X-Admin-Key') !== $adminPass) {
+            return response()->json(['error' => 'Unauthorized. Invalid Admin Key.'], 401);
+        }
+
+        try {
+            return response()->json([
+                'total_visitors' => \Illuminate\Support\Facades\DB::table('visitors')->count(),
+                'total_matches' => \App\Models\Fixture::count(),
+                'value_bets' => \App\Models\Fixture::where('is_value_bet', true)->count(),
+                'active_leagues' => \App\Models\Fixture::distinct('sport_key')->count(),
+                'last_updated' => \App\Models\Fixture::max('updated_at') ?? 'Never',
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
     }
 }

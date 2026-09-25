@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PlatformController;
 
 Route::get('/', function () {
-    return view('welcome');
+    return response()->json(['message' => 'PalBet API is running locally']);
 });
 
 Route::get('/api/risk-analysis', RiskEngineController::class);

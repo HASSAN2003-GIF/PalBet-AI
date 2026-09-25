@@ -12,6 +12,25 @@ class BettingRiskEngine:
     def __init__(self, bankroll=1000):
         self.bankroll = bankroll
 
+    def calculate_kelly_stake(self, prob, odds):
+        try:
+            p = float(prob)
+            if p > 1: p = p / 100.0  # Convert percentages (e.g., 55) to decimals (0.55)
+            
+            o = float(odds)
+            if o <= 1.0: return 0.0
+            
+            b = o - 1.0
+            q = 1.0 - p
+            kelly_fraction = ((b * p) - q) / b
+            
+            if kelly_fraction <= 0: return 0.0
+            
+            # Cap the maximum bet at 5% of the bankroll to protect funds
+            return round(self.bankroll * min(kelly_fraction, 0.05), 2)
+        except Exception:
+            return 0.0    
+
     def calculate_edge(self, true_prob, decimal_odds):
         return (true_prob * decimal_odds) - 1.0
 
