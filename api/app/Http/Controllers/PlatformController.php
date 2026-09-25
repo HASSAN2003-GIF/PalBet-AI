@@ -60,13 +60,6 @@ class PlatformController extends Controller
     // ==========================================
     public function getDailySchedule(Request $request)
     {
-        // 1. Log unique visitor
-        \Illuminate\Support\Facades\DB::table('visitors')->insertOrIgnore([
-            'ip_address' => $request->ip(),
-            'created_at' => now(),
-            'updated_at' => now()
-        ]);
-
         $date = $request->query('date', now()->format('Y-m-d'));
 
         $start = \Carbon\Carbon::parse($date)->subDays(1)->format('Y-m-d');
@@ -290,8 +283,7 @@ class PlatformController extends Controller
         }
 
         try {
-            return response()->json([
-                'total_visitors' => \Illuminate\Support\Facades\DB::table('visitors')->count(),
+            return response()->json([                
                 'total_matches' => \App\Models\Fixture::count(),
                 'value_bets' => \App\Models\Fixture::where('is_value_bet', true)->count(),
                 'active_leagues' => \App\Models\Fixture::distinct('sport_key')->count(),

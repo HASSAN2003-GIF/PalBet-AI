@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import LiveCompetitions from './LiveCompetitions';
 import Admin from './Admin';
+import { Analytics } from "@vercel/analytics/react";
 
 // Smart API Router: Uses port 8000 locally, and the Render URL in production
 const API_URL = import.meta.env.DEV ? 'http://127.0.0.1:8000' : 'https://palbet-ai.onrender.com';
@@ -227,6 +228,8 @@ function App() {
     return (
         <div className="flex h-screen bg-[#080B10] font-sans text-slate-100 overflow-hidden">
             {activeChatMatch && <AIChatModal match={activeChatMatch} onClose={() => setActiveChatMatch(null)} />}
+
+              <Analytics /> {/* <-- VERCEL ANALYTICS COMPONENT */}  
 
             <aside className="w-[280px] bg-[#0B0F15] border-r border-[#202936] flex flex-col shrink-0">
                 {/* <-- MODIFIED HEADER TO INCLUDE ADMIN GEAR BUTTON --> */}
