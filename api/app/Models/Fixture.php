@@ -45,6 +45,24 @@ class Fixture extends Model
         'stake' => 'float',
     ];
 
+    /**
+     * Competitions with a match kicking off within the next $hours. Prices taken close to
+     * kick-off are the most accurate (backtest/experiments.py), so a cheap refresh of just
+     * these leagues is worth far more than another scan of every league.
+     *
+     * @return list<string>
+     */
+    public static function sportsKickingOffWithin(int $hours): array
+    {
+        return static::query()
+            ->whereBetween('commence_time', [now(), now()->addHours($hours)])
+            ->where(fn ($q) => $q->whereNull('completed')->orWhere('completed', false))
+            ->distinct()
+            ->orderBy('sport_key')
+            ->pluck('sport_key')
+            ->all();
+    }
+
     /** True when the market has a draw (football); two-way sports have no draw price. */
     public function isThreeWay(): bool
     {

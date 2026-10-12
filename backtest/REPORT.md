@@ -67,3 +67,31 @@ Engine setting: value is flagged for edges above 5% and up to 10% (larger edges 
 | 5%–10% | 277 | 21.7% | 6.63 | -0.6% | +2.13% | 56.7% |
 
 Caveat: 'opening' prices are a single snapshot per match taken days before kickoff, and the best price across books may not have been available at the same moment.
+
+## D. What else improves accuracy? (`backtest/experiments.py`, 2026-10-12)
+
+Fitted on 2022-24, scored on 9,179 unseen 2024-26 matches where every variant had prices. "vs today" is the change in log loss against the engine's previous method (weighted all-book consensus on early prices, power margin removal); negative is better, ± is a 95% interval.
+
+| Change | Log loss | vs today | Verdict |
+|---|---|---|---|
+| Prices near kick-off instead of early (consensus) | 0.9933 | -0.0037 ± 0.0018 | **Biggest lever by far** |
+| Pinnacle alone, early prices | 0.9958 | -0.0012 ± 0.0009 | **Adopted** (anchor) |
+| Market average, early prices | 0.9960 | -0.0010 ± 0.0009 | Pinnacle is better |
+| Consensus with Pinnacle weighted 25x, early | 0.9962 | -0.0008 ± 0.0004 | Pinnacle alone is better |
+| Shin margin removal, consensus, early | 0.9964 | -0.0006 ± 0.0004 | No gain once anchored on Pinnacle |
+| Calibration layer fitted on train (one for all leagues) | 0.9969 | -0.0001 ± 0.0007 | Rejected: no gain |
+| Calibration layer per league | 0.9973 | +0.0003 ± 0.0015 | Rejected: worse |
+
+Value flags (opening prices, judged against Pinnacle's closing fair price):
+
+| Fair price used | Edge band | Flags | Mean CLV | Beat the close |
+|---|---|---|---|---|
+| Weighted consensus of the other books (previous) | 5%-10% | 387 | +2.24% | 57.1% |
+| **Pinnacle's own fair price (adopted)** | 5%-10% | 552 | +2.62% | 61.4% |
+| Pinnacle, Shin margin removal | 5%-10% | 697 | +2.00% | 58.2% |
+| Pinnacle | 3%-5% | 913 | +1.32% | 59.0% |
+| Pinnacle | over 10% | 206 | +0.19% | 44.7% |
+
+What changed in the engine: when Pinnacle quotes a match (all 21 Premier League games in a live check on 12 Oct 2026, among 29-32 books), its margin-free prices are the probabilities and the fair price for value; otherwise the weighted consensus is used as before. The 5-10% value window stays; 3-5% now also beats the close and could be opened with `RISK_ENGINE_MIN_EDGE=0.03`. The draw is slightly under-priced by the market (25.4% said, 26.4% happened) but correcting it did not improve unseen-season scores.
+
+The largest remaining gain is operational: refresh prices close to kick-off. `app:update-fixtures --upcoming=3` refreshes only the leagues with a match in the next three hours, and `PALBET_ODDS_SCHEDULE=true` runs it hourly plus a full scan twice a day.

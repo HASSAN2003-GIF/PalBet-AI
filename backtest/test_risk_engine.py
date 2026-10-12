@@ -68,5 +68,50 @@ class TotalsMarketTest(unittest.TestCase):
         self.assertIsNone(RE.consensus_over25({"bookmakers": []}, now, 240))
 
 
+class SharpAnchorTest(unittest.TestCase):
+    NOW = datetime(2026, 10, 12, 11, tzinfo=timezone.utc)
+
+    def game(self):
+        def book(key, h, d, a):
+            return {"key": key, "title": key.title(), "last_update": "2026-10-12T10:30:00Z",
+                    "markets": [{"key": "h2h", "outcomes": [
+                        {"name": "Home FC", "price": h}, {"name": "Draw", "price": d}, {"name": "Away FC", "price": a}]}]}
+        return {"home_team": "Home FC", "away_team": "Away FC", "commence_time": "2026-10-12T19:00:00Z",
+                "bookmakers": [book("pinnacle", 2.10, 3.40, 3.70), book("soft1", 2.30, 3.10, 3.20),
+                               book("soft2", 2.25, 3.20, 3.25), book("soft3", 2.20, 3.30, 3.30),
+                               book("soft4", 2.05, 3.60, 3.60)]}
+
+    def analyze(self, anchor):
+        old = RE.CFG.anchor
+        RE.CFG.anchor = anchor
+        try:
+            return RE.analyze_game(self.game(), "soccer_epl", "soccer", {}, self.NOW)
+        finally:
+            RE.CFG.anchor = old
+
+    def test_pinnacle_prices_are_the_probabilities_and_the_fair_price(self):
+        row = self.analyze("pinnacle")
+        pin = RE.devig([2.10, 3.40, 3.70])
+        self.assertEqual(row["prob_source"], "pinnacle")
+        self.assertAlmostEqual(row["prob_home"], round(pin[0], 3), places=3)
+        self.assertAlmostEqual(row["prob_draw"], round(pin[1], 3), places=3)
+        # best home price is soft1 (2.30): judged against Pinnacle's fair home probability
+        self.assertEqual(row["outcomes"]["home"]["best_bookmaker"], "Soft1")
+        self.assertAlmostEqual(row["outcomes"]["home"]["fair_prob"], round(pin[0], 4), places=4)
+        self.assertIn("Pinnacle's fair price", row["outcomes"]["home"]["fair_source"])
+
+    def test_without_an_anchor_the_weighted_consensus_is_used(self):
+        row = self.analyze(None)
+        self.assertEqual(row["prob_source"], "consensus")
+        self.assertNotAlmostEqual(row["prob_home"], round(RE.devig([2.10, 3.40, 3.70])[0], 3), places=3)
+        self.assertIn("consensus fair price", row["outcomes"]["home"]["fair_source"])
+
+    def test_missing_anchor_book_falls_back_to_consensus(self):
+        g = self.game()
+        g["bookmakers"] = g["bookmakers"][1:] + [g["bookmakers"][1] | {"key": "soft5", "title": "Soft5"}]
+        row = RE.analyze_game(g, "soccer_epl", "soccer", {}, self.NOW)
+        self.assertEqual(row["prob_source"], "consensus")
+
+
 if __name__ == "__main__":
     unittest.main()

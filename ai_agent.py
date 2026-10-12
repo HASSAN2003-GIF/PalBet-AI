@@ -130,7 +130,8 @@ def build_context(match):
         edge = value.get("edge")
         edge_txt = f"{round(edge * 100, 1)}%" if isinstance(edge, (int, float)) else "n/a"
         lines.append(f"Value flag: a price on {sel.get('label', 'one outcome')} at {sel.get('price', 'n/a')} "
-                     f"beats the consensus fair price (edge {edge_txt}).")
+                     f"beats the fair price (Pinnacle's margin-free price where available, else the "
+                     f"market consensus; edge {edge_txt}).")
     else:
         lines.append("Value flag: none. Prices are in line with the market consensus.")
     if match.get("rationale"):

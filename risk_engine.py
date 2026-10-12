@@ -62,6 +62,13 @@ ODDS_API = "https://api.the-odds-api.com/v4"
 # Everything else weighs 1.0. These are assumptions about market quality, not measured values.
 SHARP_WEIGHTS = {"pinnacle": 3.0, "betfair_ex_eu": 2.0, "betfair_ex_uk": 2.0,
                  "matchbook": 2.0, "smarkets": 1.5}
+# When this book quotes a match, its margin-free prices ARE the probabilities, and the fair price
+# value is judged against. Backtest (backtest/experiments.py, 9,179 unseen matches): on early
+# prices Pinnacle alone beat the weighted all-book consensus on log loss (-0.0012 +/- 0.0009),
+# and value flags judged against it beat the closing line more often (61% vs 57% at 5-10% edge).
+# With 20-30 books in the live feed, a 3x weight left Pinnacle diluted. RISK_ENGINE_ANCHOR=none
+# restores the plain consensus.
+DEFAULT_ANCHOR = "pinnacle"
 
 # (typical total points, std-dev of final margin) -- only leagues listed here get a score model.
 BASKETBALL_PARAMS = {"basketball_nba": (222.0, 12.0), "basketball_wnba": (163.0, 11.0),
@@ -144,6 +151,8 @@ class Config:
         # Also fetch the over/under 2.5 goals market and fit the score model to it. Doubles the
         # Odds API credits per call (credits = markets x regions), so it is opt-in.
         self.use_totals = _env_flag("RISK_ENGINE_TOTALS", False)
+        anchor = os.environ.get("RISK_ENGINE_ANCHOR", DEFAULT_ANCHOR).strip().lower()
+        self.anchor = None if anchor in ("", "none", "0", "off") else anchor
 
 
 CFG = Config()
@@ -677,19 +686,28 @@ def analyze_game(game, sport, sport_type, form_data, now):
     slots = ["home", "draw", "away"] if three_way else ["home", "away"]
     book_probs = {k: dict(zip(slots, devig([q["prices"][s] for s in slots]))) for k, q in quotes.items()}
     weights = {k: SHARP_WEIGHTS.get(k, 1.0) for k in quotes}
-    consensus = _consensus(book_probs, weights, slots)
+    anchor = CFG.anchor if CFG.anchor in book_probs else None
+    consensus = book_probs[anchor] if anchor else _consensus(book_probs, weights, slots)
     n_books = len(quotes)
 
     outcomes = {}
     for s in slots:
         best_key = max(sorted(quotes), key=lambda k: quotes[k]["prices"][s])
-        loo = _consensus(book_probs, weights, slots, exclude=best_key) if n_books >= CFG.min_books else None
+        if n_books < CFG.min_books:
+            fair, fair_source = None, None
+        elif anchor and best_key != anchor:
+            # judged against the sharp book's own fair price
+            fair, fair_source = book_probs[anchor], f"{quotes[anchor]['title']}'s fair price"
+        else:
+            # every book EXCEPT the one quoting the best price
+            fair = _consensus(book_probs, weights, slots, exclude=best_key)
+            fair_source = f"consensus fair price from the other {n_books - 1} books"
         outcomes[s] = {
             "best_price": quotes[best_key]["prices"][s],
             "best_bookmaker": quotes[best_key]["title"],
             "consensus_prob": round(consensus[s], 4),
-            # fair prob from every book EXCEPT the one quoting the best price
-            "fair_prob": round(loo[s], 4) if loo else None,
+            "fair_prob": round(fair[s], 4) if fair else None,
+            "fair_source": fair_source,
             "book_dispersion": round(pstdev([bp[s] for bp in book_probs.values()]), 4) if n_books > 1 else 0.0,
         }
     overround_best = sum(1.0 / o["best_price"] for o in outcomes.values())
@@ -750,6 +768,7 @@ def analyze_game(game, sport, sport_type, form_data, now):
         "is_soccer": sport_type == "soccer",
         # --- new ---
         "sport_type": sport_type, "n_books": n_books, "n_stale_books_ignored": n_stale,
+        "prob_source": anchor or "consensus",
         "outcomes": outcomes, "overround_best": round(overround_best, 4),
         "arbitrage": overround_best < 1.0,
         "is_live": dt <= now,
@@ -783,8 +802,10 @@ def evaluate_row(agent, row):
         sel, edge = best
         o = row["outcomes"][sel]
         fair_price = 1.0 / o["fair_prob"]
-        detail = (f"{names[sel]} @ {o['best_price']}x ({o['best_bookmaker']}) vs consensus fair price "
-                  f"{fair_price:.2f}x from the other {row['n_books'] - 1} books "
+        source = o.get("fair_source") or f"consensus fair price from the other {row['n_books'] - 1} books"
+        source_name, _, source_rest = source.partition(" from ")
+        detail = (f"{names[sel]} @ {o['best_price']}x ({o['best_bookmaker']}) vs {source_name} "
+                  f"{fair_price:.2f}x{(' from ' + source_rest) if source_rest else ''} "
                   f"(fair prob {o['fair_prob'] * 100:.1f}%).")
         if row.get("is_live"):
             status = "live"
@@ -796,7 +817,7 @@ def evaluate_row(agent, row):
         elif edge > CFG.min_edge:
             status = "value"
             stake = agent.calculate_kelly_stake(o["fair_prob"], o["best_price"])
-            rationale = (f"Price beats market consensus: edge {edge * 100:.1f}%. " + detail +
+            rationale = (f"Price beats the fair price: edge {edge * 100:.1f}%. " + detail +
                          f" Stake = {CFG.kelly_fraction:g}x Kelly, capped at {CFG.max_stake_pct * 100:g}% of bankroll.")
         else:
             rationale = "Odds reflect fair market value. No statistical edge detected. " + detail
