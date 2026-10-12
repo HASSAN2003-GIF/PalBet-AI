@@ -23,8 +23,9 @@ command line is visible to other local users via `ps`).
 
 Environment (all optional)
 --------------------------
-ODDS_API_KEY, ODDS_REGIONS (us,eu), RISK_ENGINE_BANKROLL (1000), RISK_ENGINE_MIN_EDGE (0.03),
-RISK_ENGINE_MAX_EDGE (0.15), RISK_ENGINE_KELLY_FRACTION (0.25), RISK_ENGINE_MAX_STAKE_PCT (0.05),
+ODDS_API_KEY, ODDS_REGIONS (us,eu), RISK_ENGINE_BANKROLL (1000), RISK_ENGINE_MIN_EDGE (0.05),
+RISK_ENGINE_MAX_EDGE (0.10), RISK_ENGINE_DC_RHO (-0.06), RISK_ENGINE_DC_RHO_TOTALS (-0.03),
+RISK_ENGINE_TOTALS (0; 1 = also fetch over/under 2.5, double credits), RISK_ENGINE_KELLY_FRACTION (0.25), RISK_ENGINE_MAX_STAKE_PCT (0.05),
 RISK_ENGINE_MAX_EXPOSURE_PCT (0.15), RISK_ENGINE_MIN_BOOKS (4), RISK_ENGINE_MAX_QUOTE_AGE_MIN (240),
 RISK_ENGINE_ODDS_TTL (300 s), RISK_ENGINE_NO_CACHE, RISK_ENGINE_CACHE_DIR, RISK_ENGINE_DEVIG
 (power|proportional), RISK_ENGINE_SYNTHETIC_FORM (1), RISK_ENGINE_STRICT (non-zero exit on
@@ -80,6 +81,16 @@ ESPN_SLUGS = {
 
 
 # --------------------------------------------------------------------------- configuration
+# Fitted by maximum likelihood on 13,445 matches (18 leagues, 2022-24) and checked on 13,143
+# unseen matches (2024-26): see backtest/REPORT.md. Re-run backtest/run_backtest.py to refit.
+DEFAULT_DC_RHO = -0.06          # score model fitted to 1X2 only
+DEFAULT_DC_RHO_TOTALS = -0.03   # score model fitted to 1X2 + the over/under 2.5 market
+# Value band from the same backtest: edges of 5-10% beat Pinnacle's closing line on average;
+# 3-5% were break-even and >10% had NEGATIVE closing-line value (stale or erroneous quotes).
+DEFAULT_MIN_EDGE = 0.05
+DEFAULT_MAX_EDGE = 0.10
+
+
 def _env_number(name, default, cast=float, lo=None, hi=None):
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
@@ -107,8 +118,8 @@ class Config:
         regions = [r.strip() for r in os.environ.get("ODDS_REGIONS", "us,eu").lower().split(",")]
         self.regions = [r for r in regions if r in {"us", "us2", "uk", "au", "eu"}] or ["us", "eu"]
         self.bankroll = _env_number("RISK_ENGINE_BANKROLL", 1000.0, lo=1.0)
-        self.min_edge = _env_number("RISK_ENGINE_MIN_EDGE", 0.03, lo=0.0, hi=1.0)
-        self.max_plausible_edge = _env_number("RISK_ENGINE_MAX_EDGE", 0.15, lo=0.01, hi=10.0)
+        self.min_edge = _env_number("RISK_ENGINE_MIN_EDGE", DEFAULT_MIN_EDGE, lo=0.0, hi=1.0)
+        self.max_plausible_edge = _env_number("RISK_ENGINE_MAX_EDGE", DEFAULT_MAX_EDGE, lo=0.01, hi=10.0)
         self.kelly_fraction = _env_number("RISK_ENGINE_KELLY_FRACTION", 0.25, lo=0.01, hi=1.0)
         self.max_stake_pct = _env_number("RISK_ENGINE_MAX_STAKE_PCT", 0.05, lo=0.001, hi=1.0)
         self.max_exposure_pct = _env_number("RISK_ENGINE_MAX_EXPOSURE_PCT", 0.15, lo=0.001, hi=1.0)
@@ -126,6 +137,13 @@ class Config:
         self.devig_method = method if method in ("power", "proportional") else "power"
         self.allow_synthetic_form = _env_flag("RISK_ENGINE_SYNTHETIC_FORM", True)
         self.strict = _env_flag("RISK_ENGINE_STRICT", False)
+        # Dixon-Coles low-score correction for the soccer score model (0 = plain Poisson).
+        # Default fitted by backtest/run_backtest.py on historical results; see backtest/REPORT.md.
+        self.dc_rho = _env_number("RISK_ENGINE_DC_RHO", DEFAULT_DC_RHO, lo=-0.3, hi=0.2)
+        self.dc_rho_totals = _env_number("RISK_ENGINE_DC_RHO_TOTALS", DEFAULT_DC_RHO_TOTALS, lo=-0.3, hi=0.2)
+        # Also fetch the over/under 2.5 goals market and fit the score model to it. Doubles the
+        # Odds API credits per call (credits = markets x regions), so it is opt-in.
+        self.use_totals = _env_flag("RISK_ENGINE_TOTALS", False)
 
 
 CFG = Config()
@@ -307,30 +325,51 @@ _FACT = np.array([math.factorial(int(k)) for k in _GOALS], dtype=float)
 _LAMBDAS = np.arange(0.10, 4.0001, 0.05)
 
 
-@lru_cache(maxsize=1)
-def _soccer_grid():
+@lru_cache(maxsize=16)
+def _soccer_grid(rho=0.0):
+    """Score distributions for every (lambda_home, lambda_away) pair on the grid.
+
+    rho != 0 applies the Dixon-Coles (1997) correction: independent Poisson under-predicts
+    0-0 and 1-1 (and over-predicts 1-0 / 0-1), so those four cells are reweighted by
+    tau(0,0)=1-lh*la*rho, tau(0,1)=1+lh*rho, tau(1,0)=1+la*rho, tau(1,1)=1-rho."""
     lam = _LAMBDAS
     pmf = np.exp(-lam)[:, None] * lam[:, None] ** _GOALS[None, :] / _FACT[None, :]   # (G, K)
     joint = pmf[:, None, :, None] * pmf[None, :, None, :]                             # (G, G, K, K)
+    if rho:
+        lh, la = lam[:, None], lam[None, :]
+        joint = joint.copy()
+        joint[:, :, 0, 0] *= 1.0 - lh * la * rho
+        joint[:, :, 0, 1] *= 1.0 + lh * rho
+        joint[:, :, 1, 0] *= 1.0 + la * rho
+        joint[:, :, 1, 1] *= 1.0 - rho
+        np.clip(joint, 0.0, None, out=joint)
+    joint = joint / joint.sum(axis=(2, 3), keepdims=True)   # also absorbs the 10-goal truncation
     H, A = np.meshgrid(_GOALS, _GOALS, indexing="ij")
     masks = (H > A, H == A, H < A)
     pH, pD, pA = ((joint * m).sum(axis=(2, 3)) for m in masks)
-    return {"joint": joint, "H": H, "A": A, "masks": masks, "pH": pH, "pD": pD, "pA": pA}
+    pOver = (joint * ((H + A) >= 3)).sum(axis=(2, 3))
+    return {"joint": joint, "H": H, "A": A, "masks": masks, "pH": pH, "pD": pD, "pA": pA, "pOver": pOver}
 
 
-def fit_soccer_model(p_home, p_draw, p_away):
-    """Find the independent-Poisson (lambda_home, lambda_away) whose 1X2 probabilities best match
-    the market, then read the most likely scoreline CONSISTENT with the most likely result, plus
-    Over 2.5 and BTTS, from that same fitted distribution (v1 used ad-hoc multipliers)."""
+def fit_soccer_model(p_home, p_draw, p_away, p_over25=None, rho=None):
+    """Find the (lambda_home, lambda_away) whose 1X2 probabilities (and, when the totals market
+    is known, the Over 2.5 probability) best match the market. Then read the most likely
+    scoreline CONSISTENT with the most likely result, plus Over 2.5 and BTTS, from that same
+    distribution. 1X2 alone pins down the goal *difference* well but the goal *total* poorly,
+    which is why a market Over 2.5 price sharpens every score-based output."""
     v = np.array([p_home, p_draw, p_away], dtype=float)
     if not np.all(np.isfinite(v)) or np.any(v < 0) or v.sum() <= 0:
         raise ValueError("invalid probabilities")
     ph, pd_, pa = v / v.sum()
-    g = _soccer_grid()
+    has_totals = p_over25 is not None and 0.0 < float(p_over25) < 1.0
+    if rho is None:
+        rho = CFG.dc_rho_totals if has_totals else CFG.dc_rho
+    g = _soccer_grid(float(rho))
     err = (g["pH"] - ph) ** 2 + (g["pD"] - pd_) ** 2 + (g["pA"] - pa) ** 2
+    if has_totals:
+        err = err + (g["pOver"] - float(p_over25)) ** 2
     i, j = np.unravel_index(int(np.argmin(err)), err.shape)
     joint = g["joint"][i, j]
-    joint = joint / joint.sum()
     outcome = int(np.argmax([ph, pd_, pa]))
     masked = np.where(g["masks"][outcome], joint, -1.0)
     h, a = np.unravel_index(int(np.argmax(masked)), masked.shape)
@@ -338,7 +377,8 @@ def fit_soccer_model(p_home, p_draw, p_away):
             "lambda_home": float(_LAMBDAS[i]), "lambda_away": float(_LAMBDAS[j]),
             "over25": float(joint[(g["H"] + g["A"]) >= 3].sum()),
             "btts": float(joint[(g["H"] >= 1) & (g["A"] >= 1)].sum()),
-            "fit_rmse": float(math.sqrt(err.min() / 3.0))}
+            "fit_rmse": float(math.sqrt(err.min() / 3.0)),
+            "joint": joint}   # full score distribution [home_goals, away_goals]; not JSON-emitted
 
 
 def basketball_model(p_home, sport_key="basketball_nba"):
@@ -587,6 +627,35 @@ def collect_quotes(game, now, max_age_min):
     return quotes, three_way, stale
 
 
+def consensus_over25(game, now, max_age_min):
+    """Margin-free, sharp-weighted consensus P(over 2.5 goals) from the 'totals' market, or None.
+    Only quotes on the 2.5 line count (other lines are not comparable)."""
+    probs, weights = [], []
+    for bk in game.get("bookmakers") or []:
+        market = next((m for m in (bk.get("markets") or []) if m.get("key") == "totals"), None)
+        if not market:
+            continue
+        ts = _parse_ts(market.get("last_update") or bk.get("last_update"))
+        if ts and (now - ts).total_seconds() > max_age_min * 60:
+            continue
+        prices = {}
+        for o in market.get("outcomes") or []:
+            try:
+                point = float(o.get("point"))
+            except (TypeError, ValueError):
+                continue
+            price = _valid_price(o.get("price"))
+            if abs(point - 2.5) < 1e-9 and price and o.get("name") in ("Over", "Under"):
+                prices[o["name"]] = price
+        if len(prices) == 2:
+            over, _ = devig([prices["Over"], prices["Under"]])
+            probs.append(over)
+            weights.append(SHARP_WEIGHTS.get(bk.get("key"), 1.0))
+    if not probs:
+        return None
+    return sum(p * w for p, w in zip(probs, weights)) / sum(weights)
+
+
 def _consensus(book_probs, weights, slots, exclude=None):
     keys = [k for k in book_probs if k != exclude]
     if not keys:
@@ -630,9 +699,13 @@ def analyze_game(game, sport, sport_type, form_data, now):
     p_away = round(1.0 - p_home - p_draw, 3)
 
     note = "Score/market figures are model estimates derived from consensus probabilities, not bookmaker lines."
+    p_over25 = None
     if sport_type == "soccer":
-        m = fit_soccer_model(p_home, p_draw, p_away)
+        p_over25 = consensus_over25(game, now, CFG.max_quote_age_min) if CFG.use_totals else None
+        m = fit_soccer_model(p_home, p_draw, p_away, p_over25=p_over25)
         pred_score = m["score"]
+        if p_over25 is not None:
+            note += " Goal totals are anchored to the bookmakers' over/under 2.5 market."
         m1_label, m1_val = "O2.5", f"{round(m['over25'] * 100)}%"
         m2_label, m2_val = "BTTS", f"{round(m['btts'] * 100)}%"
     elif sport_type == "basketball":
@@ -681,6 +754,7 @@ def analyze_game(game, sport, sport_type, form_data, now):
         "arbitrage": overround_best < 1.0,
         "is_live": dt <= now,
         "model_note": note,
+        "over25_market_prob": round(p_over25, 4) if p_over25 is not None else None,
     }
 
 
@@ -748,7 +822,8 @@ def _fetch_live_odds(api_key, sport="soccer_epl", now=None):
         raise ValueError(f"invalid sport key: {sport!r}")
     now = now or datetime.now(timezone.utc)
     sport_type = classify_sport(sport)
-    params = {"apiKey": api_key, "regions": ",".join(CFG.regions), "markets": "h2h", "oddsFormat": "decimal"}
+    markets = "h2h,totals" if (CFG.use_totals and sport_type == "soccer") else "h2h"
+    params = {"apiKey": api_key, "regions": ",".join(CFG.regions), "markets": markets, "oddsFormat": "decimal"}
     with ThreadPoolExecutor(max_workers=1) as pool:   # ESPN form fetch overlaps the odds call
         form_future = pool.submit(scrape_real_form_with_source, sport)
         try:

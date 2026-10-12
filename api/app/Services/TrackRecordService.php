@@ -35,7 +35,7 @@ class TrackRecordService
         $exactTotal = 0;
         $brier = 0.0;
         $buckets = [];
-        $value = ['count' => 0, 'won' => 0, 'profit' => 0.0, 'price_sum' => 0.0];
+        $value = ['count' => 0, 'won' => 0, 'profit' => 0.0, 'price_sum' => 0.0, 'clv_n' => 0, 'clv_sum' => 0.0, 'clv_beat' => 0];
         $recentValue = [];
 
         foreach ($fixtures as $f) {
@@ -61,14 +61,19 @@ class TrackRecordService
                 $buckets[$b]['hits'] += $hit;
             }
 
-            $sel = $f->valueSelection();
-            if ($sel && $sel['price']) {
+            $sel = $f->recordedValue();
+            if ($sel) {
                 $won = $sel['outcome'] === $actual;
                 $value['count']++;
                 $value['won'] += (int) $won;
                 $value['price_sum'] += $sel['price'];
                 // One token on every value price at the quoted price.
                 $value['profit'] += $won ? $sel['price'] - 1 : -1;
+                if ($sel['clv'] !== null) {
+                    $value['clv_n']++;
+                    $value['clv_sum'] += $sel['clv'];
+                    $value['clv_beat'] += (int) ($sel['clv'] > 0);
+                }
 
                 if (count($recentValue) < 12) {
                     $meta = $this->catalog->describe($f->sport_key);
@@ -82,6 +87,7 @@ class TrackRecordService
                         'selection' => $sel['label'],
                         'price' => $sel['price'],
                         'won' => $won,
+                        'clv' => $sel['clv'],
                     ];
                 }
             }
@@ -119,6 +125,12 @@ class TrackRecordService
                 'average_price' => $value['count'] ? round($value['price_sum'] / $value['count'], 2) : null,
                 'profit' => round($value['profit'], 2),
                 'roi' => $value['count'] ? round($value['profit'] / $value['count'], 4) : null,
+                // Closing-line value: only for prices recorded when first flagged.
+                'clv' => [
+                    'measured' => $value['clv_n'],
+                    'mean' => $value['clv_n'] ? round($value['clv_sum'] / $value['clv_n'], 4) : null,
+                    'beat_close_rate' => $value['clv_n'] ? round($value['clv_beat'] / $value['clv_n'], 4) : null,
+                ],
                 'recent' => $recentValue,
             ],
         ];

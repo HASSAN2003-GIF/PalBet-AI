@@ -2,19 +2,18 @@
 
 namespace App\Console\Commands;
 
+use App\Services\FixtureImporter;
 use Illuminate\Console\Command;
-use Symfony\Component\Process\Process;
-use App\Models\Fixture;
-use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Schema;
+use Symfony\Component\Process\Process;
 
 class UpdateFixtures extends Command
 {
-    protected $signature = 'app:update-fixtures';
-    protected $description = 'Unconstrained: Dynamically fetches all global sports, runs the Python engine, and stores fixtures.';
+    protected $signature = 'app:update-fixtures {--sport=* : Only these Odds API sport keys (default: every active football league)}';
 
-    public function handle()
+    protected $description = 'Fetch odds for football leagues, run the Python risk engine, and store its read on every upcoming match.';
+
+    public function handle(FixtureImporter $importer): int
     {
         $pythonBinary = base_path('../venv/bin/python3');
         if (! file_exists($pythonBinary)) {
@@ -22,36 +21,33 @@ class UpdateFixtures extends Command
         }
         $scriptPath = base_path('../risk_engine.py');
         $apiKey = (string) config('services.odds.key', '');
-        $hasFormSource = Schema::hasColumn('fixtures', 'home_form_source');
 
-        if (empty($apiKey)) {
+        if ($apiKey === '') {
             $this->error('ODDS_API_KEY is missing from your .env file.');
-            return;
+
+            return self::FAILURE;
         }
 
-        $this->info("1. Asking The Odds API for all active global sports...");
-        $response = Http::timeout(60)->get('https://api.the-odds-api.com/v4/sports', [
-            'apiKey' => $apiKey
-        ]);
+        $sports = $this->option('sport');
+        if (! $sports) {
+            $this->info('1. Asking The Odds API for active football leagues...');
+            $response = Http::timeout(60)->get('https://api.the-odds-api.com/v4/sports', ['apiKey' => $apiKey]);
+            if (! $response->successful()) {
+                $this->error("Failed to fetch the active sports list (HTTP {$response->status()}).");
 
-        if (!$response->successful()) {
-            $this->error("Failed to fetch the active sports list.");
-            return;
+                return self::FAILURE;
+            }
+            // Keep every football league the API lists (cups and lower tiers included).
+            $sports = collect($response->json())
+                ->pluck('key')
+                ->filter(fn ($key) => str_contains(strtolower((string) $key), 'soccer'))
+                ->values()
+                ->all();
         }
+        $this->info('Scouting '.count($sports).' league(s)...');
 
-        $allSportsRaw = $response->json();
-        
-        // Dynamically filter the live API feed to keep ONLY football leagues.
-        // This automatically captures lower tiers, cups, and global leagues without hardcoding.
-        $allSports = array_filter($allSportsRaw, function ($sport) {
-            return str_contains(strtolower($sport['key']), 'soccer');
-        });
-        $this->info("Found " . count($allSports) . " active global sports. Commencing unconstrained scout...");
-
-        foreach ($allSports as $sportObj) {
-            $sport = $sportObj['key'];
-            $this->info("Scouting: {$sport}");
-            
+        $totals = ['stored' => 0, 'skipped_started' => 0, 'flagged' => 0];
+        foreach ($sports as $sport) {
             // The key goes through the environment ("-" placeholder), not argv: command-line
             // arguments are visible to every local user via `ps`.
             $process = new Process(
@@ -59,60 +55,29 @@ class UpdateFixtures extends Command
                 null,
                 ['ODDS_API_KEY' => $apiKey]
             );
-            $process->setTimeout(120); 
+            $process->setTimeout(120);
             $process->run();
 
-            if ($process->isSuccessful()) {
-                $matches = json_decode($process->getOutput(), true);
-
-                if (is_array($matches)) {
-                    foreach ($matches as $match) {
-                        $commenceTime = Carbon::parse($match['commence_time']);
-                        $isSoccer = str_contains(strtolower($sport), 'soccer');
-
-                        $formSources = $hasFormSource ? [
-                            'home_form_source' => $match['home_form_source'] ?? null,
-                            'away_form_source' => $match['away_form_source'] ?? null,
-                        ] : [];
-
-                        Fixture::updateOrCreate(
-                            [
-                                'home_team' => $match['home_team'],
-                                'away_team' => $match['away_team'],
-                                'commence_time' => $commenceTime
-                            ],
-                            $formSources + [
-                                'sport_key' => $sport,
-                                'home_logo' => $match['home_logo'] ?? null,
-                                'away_logo' => $match['away_logo'] ?? null,
-                                'date_str' => $commenceTime->format('Y-m-d'),
-                                'bookmaker' => $match['bookmaker'],
-                                'odds_home' => $match['odds_home'],
-                                'odds_draw' => $match['odds_draw'] ?? 0,
-                                'odds_away' => $match['odds_away'],
-                                'prob_home' => $match['prob_home'],
-                                'prob_draw' => $match['prob_draw'] ?? 0,
-                                'prob_away' => $match['prob_away'],
-                                'pred_score' => $match['pred_score'],
-                                'home_form' => $match['home_form'] ?? '-',
-                                'away_form' => $match['away_form'] ?? '-',
-                                'market_1_label' => $match['market_1_label'] ?? 'Market',
-                                'market_1_val' => $match['market_1_val'] ?? '-',
-                                'market_2_label' => $match['market_2_label'] ?? 'Market',
-                                'market_2_val' => $match['market_2_val'] ?? '-',
-                                'edge' => $match['edge'],
-                                'stake' => $match['stake'],
-                                'is_value_bet' => $match['is_value_bet'],
-                                'rationale' => $match['rationale'],
-                                'is_soccer' => $isSoccer,
-                            ]
-                        );
-                    }
-                }
-            } else {
-                $this->error("Engine failed for {$sport}: " . $process->getErrorOutput());
+            if (! $process->isSuccessful()) {
+                $this->error("Engine failed for {$sport}: ".mb_substr($process->getErrorOutput(), 0, 500));
+                continue;
             }
+
+            $matches = json_decode($process->getOutput(), true);
+            if (! is_array($matches)) {
+                $this->warn("Engine returned no JSON for {$sport}.");
+                continue;
+            }
+
+            $counts = $importer->import($sport, $matches);
+            foreach ($counts as $k => $v) {
+                $totals[$k] += $v;
+            }
+            $this->line("  {$sport}: {$counts['stored']} stored, {$counts['skipped_started']} already started, {$counts['flagged']} new value flags");
         }
-        $this->info("✅ Global database updated successfully.");
+
+        $this->info("Done: {$totals['stored']} matches stored, {$totals['flagged']} new value flags, {$totals['skipped_started']} in-play matches left untouched.");
+
+        return self::SUCCESS;
     }
 }

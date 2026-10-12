@@ -21,11 +21,15 @@ class Fixture extends Model
         'market_1_label', 'market_1_val', 'market_2_label', 'market_2_val',
         'edge', 'stake', 'is_value_bet', 'rationale', 'is_soccer',
         'home_score', 'away_score', 'completed', 'result_fetched_at',
+        'flagged_outcome', 'flagged_price', 'flagged_edge', 'flagged_at',
     ];
 
     protected $casts = [
         'commence_time' => 'datetime',
         'result_fetched_at' => 'datetime',
+        'flagged_at' => 'datetime',
+        'flagged_price' => 'float',
+        'flagged_edge' => 'float',
         'is_value_bet' => 'boolean',
         'is_soccer' => 'boolean',
         'completed' => 'boolean',
@@ -105,6 +109,34 @@ class Fixture extends Model
         }
 
         return $best;
+    }
+
+    /**
+     * The value price as first flagged (kept even if later runs dropped it), with closing-line
+     * value when it can be measured. Older rows without a recorded flag fall back to the
+     * current flag, and have no CLV because their stored price is the latest one.
+     *
+     * @return array{outcome: string, label: string, price: float, clv: float|null}|null
+     */
+    public function recordedValue(): ?array
+    {
+        if ($this->flagged_at && $this->flagged_outcome && $this->flagged_price) {
+            $outcome = $this->flagged_outcome;
+            $total = array_sum(array_map(fn ($o) => $this->probabilityFor($o), $this->availableOutcomes()));
+            $closing = $total > 0 ? $this->probabilityFor($outcome) / $total : null;
+
+            return [
+                'outcome' => $outcome,
+                'label' => $this->teamName($outcome),
+                'price' => (float) $this->flagged_price,
+                // Flagged price against the last pre-kickoff consensus fair probability.
+                'clv' => $closing ? round((float) $this->flagged_price * $closing - 1, 4) : null,
+            ];
+        }
+
+        $sel = $this->valueSelection();
+
+        return $sel && $sel['price'] ? $sel + ['clv' => null] : null;
     }
 
     /**

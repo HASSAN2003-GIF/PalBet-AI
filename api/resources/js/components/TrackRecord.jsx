@@ -103,6 +103,13 @@ export default function TrackRecord() {
                                     </span>
                                 </p>
                             )}
+                            {data.value.clv?.measured > 0 && (
+                                <p className="mt-2 text-sm text-ink-soft">
+                                    <span className="font-semibold text-ink">{pct(data.value.clv.beat_close_rate)}</span> were better
+                                    than the final pre-kickoff price (closing-line value {signed(data.value.clv.mean * 100)}% on
+                                    average). That's a steadier test of real value than wins and losses.
+                                </p>
+                            )}
                         </div>
                         <div className="border-t-2 border-ink pt-3">
                             <dt className="text-sm text-muted">Exact score right</dt>
