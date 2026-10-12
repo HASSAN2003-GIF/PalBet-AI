@@ -11,9 +11,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        // The React app is served from a different origin (Vercel) and calls these
+        // endpoints without cookies, so CSRF tokens do not apply to them.
         $middleware->validateCsrfTokens(except: [
             'api/*',
-            'platform/chat'
         ]);
         $middleware->trustProxies(at: '*');
     })

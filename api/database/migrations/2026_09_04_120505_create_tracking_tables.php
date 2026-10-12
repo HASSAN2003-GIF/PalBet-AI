@@ -3,7 +3,6 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -25,16 +24,8 @@ return new class extends Migration
             $table->string('color')->default('bg-emerald-100 text-emerald-600');
             $table->timestamps();
         });
-
-        // 3. Seed the last 7 days with baseline traffic so your chart isn't empty today!
-        for ($i = 6; $i >= 0; $i--) {
-            DB::table('daily_metrics')->insert([
-                'date' => now()->subDays($i)->toDateString(),
-                'visitors' => rand(1000, 3500),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-        }
+        // Note: this migration used to insert random "baseline" visitor counts. Admin metrics
+        // must reflect real traffic only, so tables now start empty.
     }
 
     public function down(): void

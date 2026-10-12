@@ -35,4 +35,20 @@ return [
         ],
     ],
 
+    // The Odds API key used by the Python risk engine (app:update-fixtures).
+    'odds' => [
+        'key' => env('ODDS_API_KEY'),
+    ],
+
+    // Gemini key + model for the Python AI analyst (ai_agent.py).
+    'gemini' => [
+        'key' => env('GEMINI_API_KEY'),
+        'model' => env('GEMINI_MODEL'),
+    ],
+
+    // Admin dashboard password. Leave empty to disable the admin endpoints entirely.
+    'admin' => [
+        'password' => env('ADMIN_PASSWORD'),
+    ],
+
 ];

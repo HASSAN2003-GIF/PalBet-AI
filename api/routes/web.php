@@ -1,29 +1,25 @@
 <?php
 
+use App\Http\Controllers\PlatformController;
 use App\Http\Controllers\RiskEngineController;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\PlatformController;
 
 Route::get('/', function () {
-    return response()->json(['message' => 'PalBet API is running locally']);
+    return response()->json(['message' => 'PalBet API is running']);
 });
 
 Route::get('/api/risk-analysis', RiskEngineController::class);
 
-// Tracking & Admin Routes
-Route::get('/api/platform/track', [PlatformController::class, 'trackVisit']);
-Route::get('/api/platform/admin-stats', [PlatformController::class, 'adminStats']);
+// Matchday schedule with the risk engine's read on every fixture.
+Route::get('/api/schedule', [PlatformController::class, 'getDailySchedule'])
+    ->middleware('throttle:120,1');
 
-// Auth Route
-Route::post('/api/platform/auth', [PlatformController::class, 'authenticate'])
-    ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
+// AI analyst: each call costs an LLM request, so it is rate limited per IP.
+Route::post('/api/platform/chat', [PlatformController::class, 'askAI'])
+    ->middleware('throttle:8,1');
 
-Route::post('/api/platform/bet', [PlatformController::class, 'placeBet'])
-    ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
-
-    Route::get('/api/platform/my-bets', [\App\Http\Controllers\PlatformController::class, 'myBets']);
-
-    Route::post('/api/platform/chat', [\App\Http\Controllers\PlatformController::class, 'askAI'])
-    ->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class]);
-
-    Route::get('/api/schedule', [App\Http\Controllers\PlatformController::class, 'getDailySchedule']);
+// Unique-visitor tracking + password-protected admin metrics.
+Route::post('/api/platform/track', [PlatformController::class, 'trackVisit'])
+    ->middleware('throttle:30,1');
+Route::get('/api/platform/admin-stats', [PlatformController::class, 'adminStats'])
+    ->middleware('throttle:20,1');

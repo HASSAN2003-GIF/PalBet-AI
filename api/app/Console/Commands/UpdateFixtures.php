@@ -7,6 +7,7 @@ use Symfony\Component\Process\Process;
 use App\Models\Fixture;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
 
 class UpdateFixtures extends Command
 {
@@ -16,8 +17,12 @@ class UpdateFixtures extends Command
     public function handle()
     {
         $pythonBinary = base_path('../venv/bin/python3');
+        if (! file_exists($pythonBinary)) {
+            $pythonBinary = 'python3'; // Docker image: /opt/venv is on PATH
+        }
         $scriptPath = base_path('../risk_engine.py');
-        $apiKey = env('ODDS_API_KEY', '');
+        $apiKey = (string) config('services.odds.key', '');
+        $hasFormSource = Schema::hasColumn('fixtures', 'home_form_source');
 
         if (empty($apiKey)) {
             $this->error('ODDS_API_KEY is missing from your .env file.');
@@ -47,7 +52,13 @@ class UpdateFixtures extends Command
             $sport = $sportObj['key'];
             $this->info("Scouting: {$sport}");
             
-            $process = new Process([$pythonBinary, $scriptPath, '--json', $apiKey, 'odds', $sport]);
+            // The key goes through the environment ("-" placeholder), not argv: command-line
+            // arguments are visible to every local user via `ps`.
+            $process = new Process(
+                [$pythonBinary, $scriptPath, '--json', '-', 'odds', $sport],
+                null,
+                ['ODDS_API_KEY' => $apiKey]
+            );
             $process->setTimeout(120); 
             $process->run();
 
@@ -59,13 +70,18 @@ class UpdateFixtures extends Command
                         $commenceTime = Carbon::parse($match['commence_time']);
                         $isSoccer = str_contains(strtolower($sport), 'soccer');
 
+                        $formSources = $hasFormSource ? [
+                            'home_form_source' => $match['home_form_source'] ?? null,
+                            'away_form_source' => $match['away_form_source'] ?? null,
+                        ] : [];
+
                         Fixture::updateOrCreate(
                             [
                                 'home_team' => $match['home_team'],
                                 'away_team' => $match['away_team'],
                                 'commence_time' => $commenceTime
                             ],
-                            [
+                            $formSources + [
                                 'sport_key' => $sport,
                                 'home_logo' => $match['home_logo'] ?? null,
                                 'away_logo' => $match['away_logo'] ?? null,

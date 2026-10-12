@@ -2,295 +2,155 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
 use App\Models\Fixture;
+use App\Services\AnalystService;
+use App\Services\CompetitionCatalog;
+use App\Services\ScheduleService;
+use Carbon\CarbonImmutable;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Str;
-use Symfony\Component\Process\Process;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 class PlatformController extends Controller
 {
     // ==========================================
-    // AI AGENT INTEGRATION (Restored)
+    // AI ANALYST
     // ==========================================
-    public function askAI(Request $request)
+    public function askAI(Request $request, AnalystService $analyst): JsonResponse
     {
-        // FIX: Accept the full array context
-        $matchContext = $request->input('matchContext');
-        $message = $request->input('message');
-
-        if (!$matchContext || !$message) {
-            return response()->json(['error' => 'Missing match context or message payload'], 400);
-        }
-
-        $pythonBinary = base_path('../venv/bin/python3');
-        if (!file_exists($pythonBinary)) {
-            $pythonBinary = 'python3'; 
-        }
-        $scriptPath = base_path('../ai_agent.py');
+        $validated = $request->validate([
+            'fixture_id' => ['required', 'integer', 'exists:fixtures,id'],
+            'message' => ['required', 'string', 'max:600'],
+            'history' => ['sometimes', 'array', 'max:16'],
+            'history.*.role' => ['required_with:history', 'in:user,ai'],
+            'history.*.text' => ['required_with:history', 'string', 'max:4000'],
+        ]);
 
         try {
-            // FIX: Safely pass the JSON encoded data to the Python agent
-            $process = new Process([$pythonBinary, $scriptPath, '--chat', json_encode($matchContext), $message]);
-            $process->setTimeout(45); // Extended timeout for quality LLM generation
-            $process->run();
-
-            if (!$process->isSuccessful()) {
-                Log::error('AI Agent Failure: ' . $process->getErrorOutput());
-                return response()->json(['error' => 'The AI Analyst is currently offline.'], 503);
-            }
-
-            $output = trim($process->getOutput());
-            $parsed = json_decode($output, true);
-            
-            return response()->json([
-                'response' => $parsed['response'] ?? $output
-            ]);
-            
-        } catch (\Exception $e) {
-            Log::error('AI Agent Exception: ' . $e->getMessage());
-            return response()->json(['error' => 'Internal AI processing error.'], 500);
+            $answer = $analyst->ask(
+                Fixture::findOrFail($validated['fixture_id']),
+                trim($validated['message']),
+                $validated['history'] ?? [],
+            );
+        } catch (RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 503);
         }
+
+        return response()->json(['response' => $answer]);
     }
 
     // ==========================================
-    // DAILY SCHEDULE & MERGE ENGINE
+    // DAILY SCHEDULE
     // ==========================================
-    public function getDailySchedule(Request $request)
+    public function getDailySchedule(Request $request, ScheduleService $schedule): JsonResponse
     {
-        $date = $request->query('date', now()->format('Y-m-d'));
+        $validated = $request->validate([
+            'date' => ['sometimes', 'date_format:Y-m-d'],
+            'tz' => ['sometimes', 'string', 'timezone:all'],
+        ]);
 
-        $start = \Carbon\Carbon::parse($date)->subDays(1)->format('Y-m-d');
-        $end = \Carbon\Carbon::parse($date)->addDays(1)->format('Y-m-d');
-        $dbFixtures = Fixture::whereBetween('date_str', [$start, $end])->get();
+        $tz = $validated['tz'] ?? 'UTC';
+        $date = $validated['date'] ?? CarbonImmutable::now($tz)->toDateString();
 
-        $apiFixtures = Cache::remember("api_fixtures_{$date}", now()->addMinutes(15), function () use ($date) {
-            // API-Sports is suspended. Forcing empty array to use DB fallback.
-            return [];
+        // Fixtures only change when the engine runs, so a short cache is safe.
+        $payload = Cache::remember(
+            "schedule:{$date}:{$tz}",
+            now()->addSeconds(60),
+            fn () => $schedule->forDay($date, $tz)
+        );
+
+        return response()->json($payload);
+    }
+
+    // ==========================================
+    // VISITOR TRACKING
+    // ==========================================
+    /**
+     * Counts unique visitors. Only a keyed hash of the IP is stored, never the address itself.
+     */
+    public function trackVisit(Request $request): JsonResponse
+    {
+        $hash = hash_hmac('sha256', (string) $request->ip(), (string) config('app.key'));
+        $today = now()->toDateString();
+
+        DB::transaction(function () use ($hash, $today) {
+            $visitor = DB::table('visitors')->where('ip_address', $hash)->lockForUpdate()->first();
+
+            $isFirstVisitToday = ! $visitor || substr((string) $visitor->updated_at, 0, 10) !== $today;
+
+            if ($visitor) {
+                DB::table('visitors')->where('id', $visitor->id)->update(['updated_at' => now()]);
+            } else {
+                DB::table('visitors')->insert(['ip_address' => $hash, 'created_at' => now(), 'updated_at' => now()]);
+            }
+
+            if ($isFirstVisitToday) {
+                $updated = DB::table('daily_metrics')->where('date', $today)->increment('visitors');
+                if ($updated === 0) {
+                    DB::table('daily_metrics')->insert([
+                        'date' => $today, 'visitors' => 1, 'created_at' => now(), 'updated_at' => now(),
+                    ]);
+                }
+            }
         });
 
-        $normalize = function ($str) {
-            $str = Str::ascii((string)$str);
-            $str = strtolower(trim($str));
-            $stopWords = ['1. ', ' fc', 'fc ', ' cf', 'cf ', 'real ', ' club', ' de ', ' sporting', ' united', ' city', ' athletic', ' balompie', '04', '05'];
-            $str = str_replace($stopWords, ' ', $str);
-            return preg_replace('/[^a-z0-9]/', '', $str);
-        };
-
-        // NEW: Dynamic SVG Logo Generator for Non-Football Sports
-        $generateAvatar = function ($teamName) {
-            $cleanName = trim(preg_replace('/[^a-zA-Z0-9\s]/', '', (string)$teamName));
-            if (empty($cleanName)) $cleanName = 'TBA';
-            
-            // Hash the name to generate a consistent, unique hex color for this specific team
-            $hash = md5($cleanName);
-            $bg = substr($hash, 0, 6); 
-            $urlName = urlencode($cleanName);
-            
-            // Return a professional SVG badge
-            return "https://ui-avatars.com/api/?name={$urlName}&background={$bg}&color=fff&bold=true&format=svg";
-        };
-
-        $mergedMap = [];
-        $unmatchedApi = [];
-        
-        foreach ($apiFixtures as $item) {
-            if (!is_array($item)) continue;
-            
-            $h = $normalize(data_get($item, 'teams.home.name', ''));
-            $a = $normalize(data_get($item, 'teams.away.name', ''));
-            $hash = $h . '_' . $a;
-
-            $country = data_get($item, 'league.country', 'World');
-            $flag = data_get($item, 'league.flag');
-            if ($country === 'World') $country = 'International Clubs';
-            if ($country === 'Europe' || $country === 'International Clubs') $flag = 'https://media.api-sports.io/flags/eu.svg';
-
-            $matchData = [
-                'source' => 'api',
-                'sport' => 'Football',
-                'category' => $country,
-                'flag' => $flag,
-                'league' => data_get($item, 'league.name', 'Unknown League'),
-                'match' => [
-                    'id' => 'api_' . data_get($item, 'fixture.id', rand(1000,9999)),
-                    'time' => data_get($item, 'fixture.date') ? substr(data_get($item, 'fixture.date'), 11, 5) : 'TBA',
-                    'status' => data_get($item, 'fixture.status.short', 'NS'),
-                    'home' => data_get($item, 'teams.home.name', 'Unknown'),
-                    'away' => data_get($item, 'teams.away.name', 'Unknown'),
-                    'home_logo' => data_get($item, 'teams.home.logo'),
-                    'away_logo' => data_get($item, 'teams.away.logo'),
-                    'home_score' => data_get($item, 'goals.home'),
-                    'away_score' => data_get($item, 'goals.away'),
-                    'odds_home' => '-', 'odds_draw' => '-', 'odds_away' => '-',
-                    'prob_home' => 0, 'prob_draw' => 0, 'prob_away' => 0,
-                    'pred_score' => '-', 'market_1_label' => '-', 'market_1_val' => '-',
-                    'bookmaker' => '-', 'is_value_bet' => false, 'stake' => '0.00', 'is_soccer' => true,
-                    'has_odds' => false
-                ]
-            ];
-            
-            $mergedMap[$hash] = $matchData;
-            $unmatchedApi[$hash] = $hash; 
-        }
-
-        foreach ($dbFixtures as $f) {
-            $key = strtolower($f->sport_key ?? 'other');
-            $isSoccer = $f->is_soccer || str_contains($key, 'soccer');
-            
-            $h = $normalize($f->home_team);
-            $a = $normalize($f->away_team);
-            $hash = $h . '_' . $a;
-
-            $matchFound = false;
-            $matchedKey = null;
-
-            if ($isSoccer && isset($mergedMap[$hash])) {
-                $matchFound = true;
-                $matchedKey = $hash;
-                unset($unmatchedApi[$hash]);
-            } 
-            elseif ($isSoccer) {
-                $bestScore = 0;
-                $bestKey = null;
-                foreach ($unmatchedApi as $apiKey) {
-                    similar_text($hash, $apiKey, $sim);
-                    if ($sim > 80 && $sim > $bestScore) { 
-                        $bestScore = $sim;
-                        $bestKey = $apiKey;
-                    }
-                }
-                if ($bestKey) {
-                    $matchFound = true;
-                    $matchedKey = $bestKey;
-                    unset($unmatchedApi[$bestKey]);
-                }
-            }
-
-            $safeTime = 'TBA';
-            try { 
-                if (!empty($f->commence_time)) {
-                    $safeTime = \Carbon\Carbon::parse($f->commence_time)->format('H:i'); 
-                }
-            } catch (\Exception $e) {}
-
-            if ($matchFound && $matchedKey) {
-                $m = &$mergedMap[$matchedKey]['match'];
-                
-                $m['id'] = $f->id;
-                $m['odds_home'] = number_format((float)$f->odds_home, 2);
-                $m['odds_draw'] = (float)$f->odds_draw > 0 ? number_format((float)$f->odds_draw, 2) : '-';
-                $m['odds_away'] = number_format((float)$f->odds_away, 2);
-                $m['prob_home'] = round((float)$f->prob_home * 100);
-                $m['prob_draw'] = round((float)$f->prob_draw * 100);
-                $m['prob_away'] = round((float)$f->prob_away * 100);
-                $m['pred_score'] = $f->pred_score ?? '-';
-                $m['market_1_label'] = $f->market_1_label ?? 'Market';
-                $m['market_1_val'] = $f->market_1_val ?? '-';
-                $m['bookmaker'] = $f->bookmaker ?? 'Global';
-                $m['is_value_bet'] = (bool)$f->is_value_bet;
-                $m['stake'] = number_format((float)$f->stake, 2);
-                $m['has_odds'] = true;
-                
-                // If matched but official logo is missing, generate one
-                if (empty($m['home_logo'])) $m['home_logo'] = $generateAvatar($m['home']);
-                if (empty($m['away_logo'])) $m['away_logo'] = $generateAvatar($m['away']);
-                
-                unset($m);
-            } else {
-                if ($f->date_str !== $date) { continue; }
-
-                $keyParts = explode('_', $key);
-                $rawSport = $keyParts[0] ?? 'other';
-                
-                $sportGroup = ucwords(str_replace(['americanfootball', 'icehockey', 'rugbyleague', 'rugbyunion', 'aussierules'], ['American Football', 'Ice Hockey', 'Rugby', 'Rugby', 'Aussie Rules'], $rawSport));
-                if (strtolower($sportGroup) === 'soccer') $sportGroup = 'Football';
-                
-                $category = 'Global';
-                if (isset($keyParts[1])) {
-                    $category = ucwords(str_replace(['nba', 'nfl', 'mlb', 'nhl', 'mls'], ['USA (NBA)', 'USA (NFL)', 'USA (MLB)', 'USA (NHL)', 'USA (MLS)'], $keyParts[1]));
-                }
-                
-                $cleanLeague = ucwords(str_replace('_', ' ', str_replace($rawSport . '_', '', $key)));
-
-                $mergedMap['db_'.$f->id] = [
-                    'source' => 'db',
-                    'sport' => $sportGroup,
-                    'category' => $category,
-                    'flag' => null,
-                    'league' => strtoupper($cleanLeague) === $cleanLeague ? $cleanLeague : ucwords($cleanLeague),
-                    'match' => [
-                        'id' => $f->id,
-                        'time' => $safeTime,
-                        'status' => 'NS',
-                        'home' => $f->home_team ?? 'Unknown', 'away' => $f->away_team ?? 'Unknown',
-                        // INJECT GENERATIVE LOGOS HERE
-                        'home_logo' => $f->home_logo ?? $generateAvatar($f->home_team ?? 'Unknown'),
-                        'away_logo' => $f->away_logo ?? $generateAvatar($f->away_team ?? 'Unknown'),
-                        'home_score' => null, 'away_score' => null,
-                        'odds_home' => number_format((float)$f->odds_home, 2),
-                        'odds_draw' => (float)$f->odds_draw > 0 ? number_format((float)$f->odds_draw, 2) : '-',
-                        'odds_away' => number_format((float)$f->odds_away, 2),
-                        'prob_home' => round((float)$f->prob_home * 100),
-                        'prob_draw' => round((float)$f->prob_draw * 100),
-                        'prob_away' => round((float)$f->prob_away * 100),
-                        'pred_score' => $f->pred_score ?? '-',
-                        'market_1_label' => $f->market_1_label ?? 'Market', 'market_1_val' => $f->market_1_val ?? '-',
-                        'bookmaker' => $f->bookmaker ?? 'Global', 'is_value_bet' => (bool)$f->is_value_bet, 'stake' => number_format((float)$f->stake, 2),
-                        'is_soccer' => $isSoccer,
-                        'has_odds' => true
-                    ]
-                ];
-            }
-        }
-
-        $platformData = [];
-        foreach ($mergedMap as $entry) {
-            $sport = (string)$entry['sport']; $cat = (string)$entry['category']; $league = (string)$entry['league'];
-            
-            if (!isset($platformData[$sport])) $platformData[$sport] = ['sport' => $sport, 'categories' => []];
-            if (!isset($platformData[$sport]['categories'][$cat])) $platformData[$sport]['categories'][$cat] = ['name' => $cat, 'flag' => $entry['flag'], 'total_matches' => 0, 'leagues' => []];
-            
-            $lid = md5($sport.$cat.$league);
-            if (!isset($platformData[$sport]['categories'][$cat]['leagues'][$lid])) {
-                $platformData[$sport]['categories'][$cat]['leagues'][$lid] = ['id' => $lid, 'name' => $league, 'matches' => []];
-            }
-            
-            $platformData[$sport]['categories'][$cat]['leagues'][$lid]['matches'][] = $entry['match'];
-            $platformData[$sport]['categories'][$cat]['total_matches']++;
-        }
-
-        $finalOutput = array_values($platformData);
-        foreach ($finalOutput as &$s) {
-            $cats = array_values($s['categories']);
-            foreach ($cats as &$c) { $c['leagues'] = array_values($c['leagues']); }
-            usort($cats, fn($a, $b) => strcasecmp((string)($a['name'] ?? ''), (string)($b['name'] ?? '')));
-            $s['categories'] = $cats;
-        }
-        usort($finalOutput, fn($a, $b) => strcasecmp((string)($a['sport'] ?? ''), (string)($b['sport'] ?? '')));
-
-        return response()->json($finalOutput);
+        return response()->json(['status' => 'ok']);
     }
 
-    public function adminStats(Request $request)
+    // ==========================================
+    // ADMIN
+    // ==========================================
+    public function adminStats(Request $request, CompetitionCatalog $catalog): JsonResponse
     {
-        // 1. Verify Admin Password
-        $adminPass = env('ADMIN_PASSWORD', 'palbet-secret-2026'); 
-        if ($request->header('X-Admin-Key') !== $adminPass) {
-            return response()->json(['error' => 'Unauthorized. Invalid Admin Key.'], 401);
+        $password = (string) config('services.admin.password');
+        if ($password === '') {
+            return response()->json(['message' => 'Admin access is not configured. Set ADMIN_PASSWORD on the server.'], 503);
+        }
+        if (! hash_equals($password, (string) $request->header('X-Admin-Key'))) {
+            return response()->json(['message' => 'That admin password is not correct.'], 401);
         }
 
-        try {
-            return response()->json([                
-                'total_matches' => \App\Models\Fixture::count(),
-                'value_bets' => \App\Models\Fixture::where('is_value_bet', true)->count(),
-                'active_leagues' => \App\Models\Fixture::distinct('sport_key')->count(),
-                'last_updated' => \App\Models\Fixture::max('updated_at') ?? 'Never',
+        $now = now();
+        $from = $now->copy()->subDays(13)->toDateString();
+        $daily = DB::table('daily_metrics')->where('date', '>=', $from)->pluck('visitors', 'date');
+        $days = collect(range(13, 0))->map(function ($ago) use ($now, $daily) {
+            $date = $now->copy()->subDays($ago)->toDateString();
+            // Dates may come back as "Y-m-d" or "Y-m-d 00:00:00" depending on the driver.
+            $count = $daily->first(fn ($v, $k) => str_starts_with((string) $k, $date)) ?? 0;
+
+            return ['date' => $date, 'visitors' => (int) $count];
+        })->values();
+
+        $upcoming = Fixture::where('commence_time', '>=', $now);
+
+        $topValue = (clone $upcoming)->where('is_value_bet', true)
+            ->orderByDesc('edge')->limit(5)->get()
+            ->map(fn (Fixture $f) => [
+                'id' => $f->id,
+                'match' => "{$f->home_team} vs {$f->away_team}",
+                'competition' => $catalog->describe($f->sport_key)['name'],
+                'kickoff' => $f->commence_time?->toIso8601ZuluString(),
+                'edge' => round((float) $f->edge, 4),
             ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => $e->getMessage()], 500);
-        }
+
+        $lastRun = Fixture::max('updated_at');
+
+        return response()->json([
+            'visitors' => [
+                'total' => DB::table('visitors')->count(),
+                'today' => (int) ($days->last()['visitors'] ?? 0),
+                'last_14_days' => $days,
+            ],
+            'fixtures' => [
+                'total' => Fixture::count(),
+                'upcoming' => (clone $upcoming)->count(),
+                'upcoming_value' => (clone $upcoming)->where('is_value_bet', true)->count(),
+                'upcoming_competitions' => (clone $upcoming)->distinct()->count('sport_key'),
+                'last_engine_run' => $lastRun ? CarbonImmutable::parse($lastRun)->toIso8601ZuluString() : null,
+            ],
+            'top_value' => $topValue,
+        ]);
     }
 }
