@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PalBet backtest: measure the risk engine against real historical results.
+PAL-PREDICT backtest: measure the risk engine against real historical results.
 
 Data: football-data.co.uk season files (results + opening and closing odds from Pinnacle,
 the market average, individual bookmakers, and over/under 2.5). Files are cached in

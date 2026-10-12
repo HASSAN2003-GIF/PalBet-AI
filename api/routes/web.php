@@ -6,7 +6,7 @@ use App\Http\Controllers\RiskEngineController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    return response()->json(['message' => 'PalBet API is running']);
+    return response()->json(['message' => 'PAL-PREDICT API is running']);
 });
 
 Route::get('/api/risk-analysis', RiskEngineController::class);

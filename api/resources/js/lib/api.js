@@ -35,7 +35,7 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
         });
     } catch (err) {
         if (err.name === 'AbortError') throw err;
-        throw new ApiError('Could not reach the PalBet server. Check your connection and try again.', 0);
+        throw new ApiError('Could not reach PAL-PREDICT. Check your connection and try again.', 0);
     }
 
     let payload = null;

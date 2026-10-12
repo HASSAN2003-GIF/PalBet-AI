@@ -10,6 +10,8 @@ import TrackRecord from './components/TrackRecord';
 import MySlips from './components/MySlips';
 import SlipPanel from './components/SlipPanel';
 import AuthDialog from './components/AuthDialog';
+import SiteFooter from './components/SiteFooter';
+import { HomeLink } from './components/Brand';
 import { AccountProvider, tokens, useAccount } from './lib/account';
 import { getSchedule, trackVisit } from './lib/api';
 import { addDays, dayOfMonth, hoursSince, localISODate, longDate, relativeDayName, timeAgo } from './lib/format';
@@ -32,15 +34,6 @@ function writeUrlState({ date, view, competition }) {
 }
 
 // ---------------------------------------------------------------- pieces
-function Wordmark() {
-    return (
-        <a href="/" className="flex items-center gap-2 text-ink" aria-label="PalBet AI home">
-            <i className="yellow-card text-xl" aria-hidden="true" />
-            <span className="wide text-lg font-extrabold tracking-tight">PalBet AI</span>
-        </a>
-    );
-}
-
 function DateStrip({ selected, onSelect }) {
     const today = localISODate();
     const days = useMemo(() => Array.from({ length: 8 }, (_, i) => addDays(today, i - 1)), [today]);
@@ -328,43 +321,32 @@ function SiteHeader({ route }) {
     ];
     return (
         <header className="sticky top-0 z-30 border-b border-line bg-chalk/95 backdrop-blur">
-            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
-                <Wordmark />
-                <div className="order-last flex w-full items-center justify-between gap-2 sm:order-none sm:w-auto sm:gap-4">
-                    <nav aria-label="Main" className="flex items-center gap-1 text-sm">
-                        {links.map((l) => (
-                            <a
-                                key={l.route}
-                                href={l.href}
-                                aria-current={route === l.route ? 'page' : undefined}
-                                className={`rounded-full px-3 py-1.5 font-medium transition-colors ${
-                                    route === l.route ? 'bg-ink text-chalk' : 'text-ink-soft hover:text-ink'
-                                }`}
-                            >
-                                <span className="sm:hidden">{l.short}</span>
-                                <span className="hidden sm:inline">{l.label}</span>
-                            </a>
-                        ))}
+            {/* Phones: brand + account on one row, navigation on the next. sm+: one row. */}
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 px-4 pt-2.5 sm:flex-nowrap sm:py-2 sm:px-6">
+                <HomeLink />
+                <div className="order-last -mx-2 w-full sm:order-none sm:mx-0 sm:ml-auto sm:w-auto">
+                    <nav aria-label="Main" className="flex items-center gap-1 text-sm sm:gap-2">
+                        {links.map((l) => {
+                            const active = route === l.route;
+                            return (
+                                <a
+                                    key={l.route}
+                                    href={l.href}
+                                    aria-current={active ? 'page' : undefined}
+                                    className={`relative px-2 pb-2.5 pt-2 font-medium transition-colors ${active ? 'text-ink' : 'text-muted hover:text-ink'}`}
+                                >
+                                    <span className="sm:hidden">{l.short}</span>
+                                    <span className="hidden sm:inline">{l.label}</span>
+                                    {/* Current page: the blue full stop from the PAL. mark. */}
+                                    {active && <span aria-hidden="true" className="absolute bottom-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-pal" />}
+                                </a>
+                            );
+                        })}
                     </nav>
-                    <AccountArea />
                 </div>
+                <AccountArea />
             </div>
         </header>
-    );
-}
-
-function SiteFooter() {
-    return (
-        <footer className="border-t border-line">
-            <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-8 text-sm text-muted sm:flex-row sm:items-start sm:justify-between sm:px-6">
-                <p className="max-w-2xl leading-relaxed">
-                    Win chances come from many bookmakers' prices with their margin removed. They are estimates, not promises.
-                    A value price is one priced better than the market thinks it's worth; it can still lose.
-                    For adults 18+. Never stake money you can't afford to lose.
-                </p>
-                <a href="#admin" className="shrink-0 underline decoration-line-strong underline-offset-4 hover:text-ink">Admin</a>
-            </div>
-        </footer>
     );
 }
 
@@ -386,7 +368,7 @@ function App() {
         <AccountProvider>
             <div className="flex min-h-screen flex-col">
                 <SiteHeader route={route} />
-                <div className="flex-1 pb-20">
+                <div className="flex-1 pb-6">
                     {route === 'record' && <TrackRecord />}
                     {route === 'slips' && <MySlips />}
                     {route === 'matches' && <Matchday />}

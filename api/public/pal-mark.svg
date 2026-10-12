@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 264 100">
+  <title>PAL-PREDICT</title>
+  <!-- Master "PAL." mark. Letters #13211B (ink); swap to #F1F3EE on dark backgrounds. Dot is always #1D8BD8. -->
+  <path d="M0 0H50A30 30 0 0 1 50 60H26V100H0Z M26 22H48A8 8 0 0 1 48 38H26Z M70 100L100 0H128L158 100H131L125 80H103L97 100Z M108.4 62H119.6L114 43.3Z M168 0H194V76H230V100H168Z" fill="#13211B" fill-rule="evenodd"/>
+  <circle cx="251" cy="87" r="13" fill="#1D8BD8"/>
+</svg>

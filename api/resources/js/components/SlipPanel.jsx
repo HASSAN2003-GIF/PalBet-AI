@@ -38,6 +38,9 @@ export default function SlipPanel() {
 
     if (!slipOpen) {
         return (
+            <>
+            {/* Room at the end of the page so the floating button never covers the footer. */}
+            <div aria-hidden="true" className="h-20" />
             <button
                 type="button"
                 onClick={() => setSlipOpen(true)}
@@ -47,6 +50,7 @@ export default function SlipPanel() {
                 Your slip
                 <span className="cond nums font-bold text-chalk/70">{price(combined)}</span>
             </button>
+            </>
         );
     }
 

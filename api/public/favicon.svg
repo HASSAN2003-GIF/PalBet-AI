@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <title>PAL-PREDICT</title>
+  <!-- Compact mark: "P." from the PAL. logo on an ink tile, readable at 16px. -->
+  <rect width="128" height="128" rx="28" fill="#13211B"/>
+  <g transform="translate(18.5 24) scale(0.8)">
+    <path d="M0 0H50A30 30 0 0 1 50 60H26V100H0Z M26 22H48A8 8 0 0 1 48 38H26Z" fill="#F1F3EE" fill-rule="evenodd"/>
+    <circle cx="101" cy="87" r="13" fill="#1D8BD8"/>
+  </g>
+</svg>

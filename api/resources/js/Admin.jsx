@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { getAdminStats } from './lib/api';
 import { hoursSince, kickoffTime, percent, timeAgo } from './lib/format';
+import { BrandLockup } from './components/Brand';
+import SiteFooter from './components/SiteFooter';
 
 const KEY = 'pb_admin_key';
 const readKey = () => { try { return sessionStorage.getItem(KEY) || ''; } catch { return ''; } };
@@ -68,13 +70,12 @@ export default function Admin({ onClose }) {
     useEffect(() => { if (key) load(key); }, [key, load]);
 
     return (
-        <div className="min-h-screen">
+        <div className="flex min-h-screen flex-col">
             <header className="border-b border-line">
                 <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6">
-                    <div className="flex items-center gap-2">
-                        <i className="yellow-card text-xl" aria-hidden="true" />
-                        <span className="wide text-lg font-extrabold tracking-tight">PalBet AI</span>
-                        <span className="ml-2 text-sm text-muted">Admin</span>
+                    <div className="flex items-center gap-3">
+                        <a href="/" aria-label="PAL-PREDICT home"><BrandLockup /></a>
+                        <span className="border-l border-line-strong pl-3 text-sm text-muted">Admin</span>
                     </div>
                     <div className="flex items-center gap-4 text-sm">
                         {status === 'ready' && (
@@ -89,7 +90,7 @@ export default function Admin({ onClose }) {
                 </div>
             </header>
 
-            <main className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
+            <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10 sm:px-6">
                 {status === 'locked' && (
                     <form
                         className="mx-auto flex max-w-sm flex-col gap-3"
@@ -187,6 +188,7 @@ export default function Admin({ onClose }) {
                     </div>
                 )}
             </main>
+            <SiteFooter />
         </div>
     );
 }

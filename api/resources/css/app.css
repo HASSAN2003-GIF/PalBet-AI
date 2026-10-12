@@ -2,13 +2,18 @@
 @import "tailwindcss";
 
 /*
- * PalBet AI design tokens.
- * Chalk paper, pitch-green ink, and one loud colour: the referee's yellow card,
- * reserved for value prices. Home / draw / away always use pitch / sand / navy.
+ * PAL-PREDICT design tokens.
+ * Chalk paper and pitch-green ink. Two accents, each with one job:
+ *   --color-pal   the blue full stop of the PAL. mark: brand moments only (logo dot,
+ *                 current-page marker, keyboard focus). Never used for data.
+ *   --color-card  the referee's yellow card: value prices only.
+ * Home / draw / away always use pitch / sand / navy.
  */
 @theme {
     --font-sans: "Archivo", ui-sans-serif, system-ui, sans-serif;
 
+    --color-pal: #1D8BD8;
+    --color-pal-ink: #0E5E9A;
     --color-chalk: #F1F3EE;
     --color-paper: #FBFCFA;
     --color-line: #D9DED6;
@@ -38,7 +43,7 @@
         font-feature-settings: "tnum" 0;
     }
     :focus-visible {
-        outline: 2px solid var(--color-home);
+        outline: 2px solid var(--color-pal);
         outline-offset: 2px;
         border-radius: 4px;
     }

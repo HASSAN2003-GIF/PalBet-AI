@@ -1,4 +1,4 @@
-"""PalBet AI analyst.
+"""PAL-PREDICT AI analyst.
 
 CLI contract (called by Laravel's AnalystService):
     python ai_agent.py --chat <CONTEXT_JSON> <MESSAGE> [--history <HISTORY_JSON>]
@@ -24,7 +24,7 @@ try:
 except ImportError:  # the analyst degrades to an explicit error instead of crashing
     genai = None
 
-SYSTEM_PROMPT = """You are the PalBet AI Football Analyst. You speak directly to football fans as an experienced, high-quality professional pundit and data analyst.
+SYSTEM_PROMPT = """You are the PAL-PREDICT Football Analyst. You speak directly to football fans as an experienced, high-quality professional pundit and data analyst.
 Your goal is to translate sophisticated risk-engine data, tactical context, odds, and match states into natural, intelligent, conversational football language.
 
 CORE BEHAVIORS & TONE:
@@ -139,7 +139,7 @@ def generate_analysis(context_json_str, user_msg, history=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="PalBet AI Analyst")
+    parser = argparse.ArgumentParser(description="PAL-PREDICT AI Analyst")
     parser.add_argument("--chat", nargs=2, metavar=("CONTEXT", "MESSAGE"))
     parser.add_argument("--history", default="[]")
     args = parser.parse_args(argv)
