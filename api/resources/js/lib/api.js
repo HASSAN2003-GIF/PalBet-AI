@@ -1,9 +1,21 @@
 // Where the Laravel API lives. VITE_API_URL wins; otherwise local dev uses the same origin
 // (Vite proxies /api to Laravel, see vite.config.js) and production uses the Render service.
-export const API_URL = (
-    import.meta.env.VITE_API_URL ||
-    (import.meta.env.DEV ? '' : 'https://palbet-ai.onrender.com')
-).replace(/\/+$/, '');
+const DEFAULT_API = import.meta.env.DEV ? '' : 'https://palbet-ai.onrender.com';
+
+/** Pull a clean origin out of VITE_API_URL, which may have been pasted as a markdown link,
+ *  in quotes, or with a trailing /api. Anything unusable falls back to the default. */
+export function resolveApiUrl(raw, fallback = DEFAULT_API) {
+    const match = String(raw || '').match(/https?:\/\/[^\s\])"'<>]+/i);
+    if (!match) return fallback;
+    try {
+        const url = new URL(match[0]);
+        return `${url.origin}${url.pathname.replace(/\/+$/, '').replace(/\/api$/i, '')}`;
+    } catch {
+        return fallback;
+    }
+}
+
+export const API_URL = resolveApiUrl(import.meta.env.VITE_API_URL);
 
 export class ApiError extends Error {
     constructor(message, status, payload) {
