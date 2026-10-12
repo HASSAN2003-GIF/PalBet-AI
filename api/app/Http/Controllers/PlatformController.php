@@ -39,7 +39,7 @@ class PlatformController extends Controller
             return response()->json(['message' => $e->getMessage()], 503);
         }
 
-        return response()->json(['response' => $answer]);
+        return response()->json($answer);
     }
 
     // ==========================================

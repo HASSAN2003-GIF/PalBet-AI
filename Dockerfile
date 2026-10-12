@@ -11,7 +11,8 @@ RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # 3. Install all Python dependencies directly into the isolated environment
-RUN pip install --no-cache-dir google-generativeai requests numpy
+#    google-genai is Google's current Gemini SDK (the analyst uses it for Google Search grounding)
+RUN pip install --no-cache-dir google-genai requests numpy
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 

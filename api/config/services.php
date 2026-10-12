@@ -44,6 +44,12 @@ return [
     'gemini' => [
         'key' => env('GEMINI_API_KEY'),
         'model' => env('GEMINI_MODEL'),
+        'fallback_model' => env('GEMINI_FALLBACK_MODEL'),
+        // Google Search grounding (injuries, press conferences). Needs a Gemini plan that
+        // allows search; when refused, the analyst answers without it and says so.
+        'web_search' => (bool) env('ANALYST_WEB_SEARCH', true),
+        // ESPN match data (table, last results, head-to-head, news, line-ups). Free.
+        'espn' => (bool) env('ANALYST_ESPN', true),
     ],
 
     // Admin dashboard password. Leave empty to disable the admin endpoints entirely.

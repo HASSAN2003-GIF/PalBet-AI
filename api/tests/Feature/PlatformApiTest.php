@@ -19,18 +19,24 @@ class PlatformApiTest extends TestCase
     public function test_analyst_answers_about_a_stored_fixture(): void
     {
         $fixture = Fixture::factory()->create();
+        $answer = [
+            'response' => 'The home side are slight favourites.',
+            'sources' => [['title' => 'ESPN match page', 'url' => 'https://www.espn.com/soccer/match/_/gameId/1']],
+            'used' => ['espn' => true, 'web_search' => false],
+            'search_html' => null,
+        ];
 
-        $this->mock(AnalystService::class, function (MockInterface $mock) use ($fixture) {
+        $this->mock(AnalystService::class, function (MockInterface $mock) use ($fixture, $answer) {
             $mock->shouldReceive('ask')->once()
                 ->withArgs(fn ($f, $q, $h) => $f->is($fixture) && $q === 'Who is favourite?' && $h === [['role' => 'user', 'text' => 'Hi'], ['role' => 'ai', 'text' => 'Hello']])
-                ->andReturn('The home side are slight favourites.');
+                ->andReturn($answer);
         });
 
         $this->postJson('/api/platform/chat', [
             'fixture_id' => $fixture->id,
             'message' => '  Who is favourite?  ',
             'history' => [['role' => 'user', 'text' => 'Hi'], ['role' => 'ai', 'text' => 'Hello']],
-        ])->assertOk()->assertExactJson(['response' => 'The home side are slight favourites.']);
+        ])->assertOk()->assertExactJson($answer);
     }
 
     public function test_analyst_rejects_unknown_fixtures_and_oversized_questions(): void
@@ -58,7 +64,7 @@ class PlatformApiTest extends TestCase
     public function test_analyst_is_rate_limited(): void
     {
         $fixture = Fixture::factory()->create();
-        $this->mock(AnalystService::class, fn (MockInterface $m) => $m->shouldReceive('ask')->andReturn('ok'));
+        $this->mock(AnalystService::class, fn (MockInterface $m) => $m->shouldReceive('ask')->andReturn(['response' => 'ok', 'sources' => [], 'used' => ['espn' => false, 'web_search' => false], 'search_html' => null]));
 
         for ($i = 0; $i < 8; $i++) {
             $this->postJson('/api/platform/chat', ['fixture_id' => $fixture->id, 'message' => 'Hi'])->assertOk();

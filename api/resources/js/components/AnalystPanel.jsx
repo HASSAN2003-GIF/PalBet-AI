@@ -3,13 +3,60 @@ import { askAnalyst } from '../lib/api';
 import { kickoffTime } from '../lib/format';
 import ProbabilityStrip from './ProbabilityStrip';
 
+/** What the analyst checked for one answer, with links people can follow to verify it. */
+function AnswerSources({ message }) {
+    const sources = message.sources || [];
+    const used = message.used || {};
+    const checked = [
+        used.espn && 'ESPN match data',
+        used.web_search && 'Google Search',
+    ].filter(Boolean);
+    if (!sources.length && !checked.length && !message.searchHtml) {
+        return <p className="mt-3 text-xs text-muted">Answered from the model's numbers only. No live sources were available for this match.</p>;
+    }
+    return (
+        <div className="mt-4 border-t border-line pt-3 text-xs text-muted">
+            <p>
+                Checked: {checked.length ? checked.join(' and ') : 'the model only'}
+                {!used.web_search && ' (live web search unavailable, so late injury news may be missing)'}
+            </p>
+            {sources.length > 0 && (
+                <ul className="mt-1.5 flex flex-col gap-1">
+                    {sources.map((s) => (
+                        <li key={s.url} className="truncate">
+                            <a
+                                href={s.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-ink-soft underline decoration-line-strong underline-offset-2 hover:text-home"
+                            >
+                                {s.title}
+                            </a>
+                        </li>
+                    ))}
+                </ul>
+            )}
+            {message.searchHtml && (
+                // Google requires its search suggestions to be shown with grounded answers.
+                // Sandboxed so its markup cannot touch this page; links open in a new tab.
+                <iframe
+                    title="Google search suggestions"
+                    srcDoc={message.searchHtml}
+                    sandbox="allow-popups allow-popups-to-escape-sandbox"
+                    className="mt-2 h-14 w-full"
+                />
+            )}
+        </div>
+    );
+}
+
 function starterQuestions(match) {
-    const qs = ['How is this game likely to play out?', 'What could change the result?'];
+    const qs = ['How is this game likely to play out?', "What's the team news and recent form?"];
     if (match.value?.is_value && match.value.selection) {
         const sel = match.value.selection;
         qs.splice(1, 0, `Why is ${sel.outcome === 'draw' ? 'the draw' : sel.label} a value price?`);
     } else {
-        qs.push(`Why does the model favour this result?`);
+        qs.push("What's the case for the underdog?");
     }
     return qs;
 }
@@ -51,7 +98,13 @@ export default function AnalystPanel({ match, competition, onClose }) {
         setPending(true);
         try {
             const data = await askAnalyst(match.id, question, history);
-            setMessages((m) => [...m, { role: 'ai', text: data.response }]);
+            setMessages((m) => [...m, {
+                role: 'ai',
+                text: data.response,
+                sources: Array.isArray(data.sources) ? data.sources : [],
+                used: data.used || {},
+                searchHtml: data.search_html || null,
+            }]);
         } catch (err) {
             setError(err.message);
             // Put the question back so it can be retried without retyping.
@@ -111,7 +164,7 @@ export default function AnalystPanel({ match, competition, onClose }) {
                     {messages.length === 0 && (
                         <div className="flex flex-col gap-4">
                             <p className="text-sm leading-relaxed text-ink-soft">
-                                Ask about this match. The analyst works from the model's numbers and says so when it doesn't know something, like injuries or line-ups.
+                                Ask about this match. Before answering, the analyst checks the league table, recent results, head-to-head, news and line-ups, then weighs the case for both teams. Sources are listed under each answer, and it says so when it can't confirm something.
                             </p>
                             <div className="flex flex-col items-start gap-2">
                                 {starterQuestions(match).map((q) => (
@@ -139,6 +192,7 @@ export default function AnalystPanel({ match, competition, onClose }) {
                                         {m.text.split(/\n{2,}/).map((para, j) => (
                                             <p key={j} className="mb-3 last:mb-0 whitespace-pre-line">{para.replace(/\*\*(.+?)\*\*/g, '$1')}</p>
                                         ))}
+                                        <AnswerSources message={m} />
                                     </div>
                                 )}
                             </li>
@@ -147,7 +201,7 @@ export default function AnalystPanel({ match, competition, onClose }) {
 
                     {pending && (
                         <p className="typing mt-5 border-l-2 border-line-strong pl-4 text-sm text-muted">
-                            Reading the numbers<span>.</span><span>.</span><span>.</span>
+                            Checking the latest match data<span>.</span><span>.</span><span>.</span>
                         </p>
                     )}
                 </div>
