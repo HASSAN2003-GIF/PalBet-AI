@@ -17,6 +17,17 @@ use Symfony\Component\Process\Process;
  */
 class AnalystService
 {
+    /** What a visitor is told for each failure category reported by ai_agent.py. */
+    public const MESSAGES = [
+        'setup' => 'The analyst is not set up correctly on the server yet. Please try again later.',
+        'auth' => 'The analyst cannot reach its AI service: the API key was rejected.',
+        'quota' => 'The analyst has reached its AI usage limit for now. Please try again later.',
+        'busy' => 'The AI service is busy right now. Please try again in a minute.',
+        'model' => 'The analyst\'s AI model is not available. The model setting needs updating.',
+        'request' => 'The analyst could not process that question. Please try rephrasing it.',
+        'unknown' => 'The analyst is unavailable right now.',
+    ];
+
     public function __construct(
         private ScheduleService $schedule,
         private CompetitionCatalog $catalog,
@@ -60,13 +71,17 @@ class AnalystService
 
         if (! $process->isSuccessful()) {
             Log::error('AI analyst process failed', ['stderr' => mb_substr($process->getErrorOutput(), 0, 2000)]);
-            throw new RuntimeException('The analyst is unavailable right now.');
+            throw new RuntimeException(self::MESSAGES['setup']);
         }
 
         $payload = json_decode(trim($process->getOutput()), true);
         if (! is_array($payload) || ($payload['ok'] ?? true) === false || empty($payload['response'])) {
-            Log::warning('AI analyst returned no answer', ['error' => $payload['error'] ?? 'unparseable output']);
-            throw new RuntimeException('The analyst is unavailable right now.');
+            $reason = is_array($payload) ? (string) ($payload['reason'] ?? 'unknown') : 'setup';
+            Log::warning('AI analyst returned no answer', [
+                'reason' => $reason,
+                'error' => is_array($payload) ? ($payload['error'] ?? null) : 'unparseable output',
+            ]);
+            throw new RuntimeException(self::MESSAGES[$reason] ?? self::MESSAGES['unknown']);
         }
 
         return [

@@ -91,5 +91,29 @@ class AgentPrompt(unittest.TestCase):
         self.assertEqual(html, "<div>chips</div>")
 
 
+class FailureReasons(unittest.TestCase):
+    def err(self, code, msg):
+        e = Exception(msg)
+        e.code = code
+        return e
+
+    def test_failures_are_categorised_without_secrets(self):
+        self.assertEqual(ai_agent.failure_reason(self.err(400, "API key not valid. API_KEY_INVALID")), "auth")
+        self.assertEqual(ai_agent.failure_reason(self.err(429, "RESOURCE_EXHAUSTED")), "quota")
+        self.assertEqual(ai_agent.failure_reason(self.err(404, "models/x is not found")), "model")
+        self.assertEqual(ai_agent.failure_reason(self.err(503, "high demand")), "busy")
+        self.assertEqual(ai_agent.failure_reason(self.err(None, "weird")), "unknown")
+
+    def test_missing_key_is_a_setup_problem(self):
+        old = os.environ.pop("GEMINI_API_KEY", None)
+        try:
+            ok, out = ai_agent.generate_analysis("{}", "hello")
+        finally:
+            if old is not None:
+                os.environ["GEMINI_API_KEY"] = old
+        self.assertFalse(ok)
+        self.assertEqual(out["reason"], "setup")
+
+
 if __name__ == "__main__":
     unittest.main()

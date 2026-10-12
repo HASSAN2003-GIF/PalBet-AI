@@ -173,6 +173,23 @@ def _status(exc):
     return getattr(exc, "code", None) or getattr(exc, "status_code", None)
 
 
+def failure_reason(exc):
+    """Coarse, secret-free category for a failed Gemini call, so the website can say why."""
+    status = _status(exc)
+    text = str(exc).lower()
+    if status in (401, 403) or "api key" in text or "api_key" in text or "permission" in text:
+        return "auth"
+    if status == 429 or "quota" in text or "resource_exhausted" in text:
+        return "quota"
+    if status == 404 or "not found" in text:
+        return "model"
+    if status in (500, 502, 503, 504) or "timeout" in text or "timed out" in text or "unavailable" in text:
+        return "busy"
+    if status == 400:
+        return "request"
+    return "unknown"
+
+
 def grounding_sources(response, limit=6):
     """Web pages Google Search grounded the answer on, plus the search-suggestions HTML."""
     sources, html = [], None
@@ -216,10 +233,10 @@ def generate_analysis(context_json_str, user_msg, history=None, now=None):
         match = {"raw_context": context_json_str}
 
     if genai is None:
-        return False, "google-genai is not installed"
+        return False, {"error": "google-genai is not installed", "reason": "setup"}
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
-        return False, "GEMINI_API_KEY is not set"
+        return False, {"error": "GEMINI_API_KEY is not set", "reason": "setup"}
 
     dossier = None
     if match_research is not None and isinstance(match, dict) and _flag("ANALYST_ESPN"):
@@ -235,6 +252,7 @@ def generate_analysis(context_json_str, user_msg, history=None, now=None):
     contents = build_contents(user_msg, history)
 
     model, tried_fallback, last_error, response = primary, False, "no attempt", None
+    reason = "busy"
     while True:
         remaining = DEADLINE_SECONDS - (time.monotonic() - started)
         if remaining < 6:
@@ -245,6 +263,9 @@ def generate_analysis(context_json_str, user_msg, history=None, now=None):
         except Exception as exc:  # the SDK raises many unrelated types
             status = _status(exc)
             last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+            reason = failure_reason(exc)
+            if reason == "auth" and not (search and status == 403):
+                break                   # a rejected key will not work on any model
             if search and status in (400, 403, 429):
                 search = False          # plan does not allow search (or quota spent): answer without it
             elif not tried_fallback and fallback and fallback != model:
@@ -259,7 +280,9 @@ def generate_analysis(context_json_str, user_msg, history=None, now=None):
         except (ValueError, AttributeError):
             text = ""
     if not text:
-        return False, last_error if response is None else "empty response"
+        if response is None:
+            return False, {"error": last_error, "reason": reason}
+        return False, {"error": "empty response", "reason": "unknown"}
 
     web_sources, search_html = grounding_sources(response) if search else ([], None)
     sources = (dossier or {}).get("sources", [])[:4] + web_sources
@@ -285,7 +308,7 @@ def main(argv=None):
         except ValueError:
             history = []
         ok, result = generate_analysis(args.chat[0], args.chat[1].strip(), history if isinstance(history, list) else [])
-        out = {"ok": True, **result} if ok else {"ok": False, "error": result}
+        out = {"ok": True, **result} if ok else {"ok": False, **result}
 
     sys.stdout.write(json.dumps(out) + "\n")
     return 0
