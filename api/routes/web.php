@@ -14,6 +14,10 @@ Route::get('/api/risk-analysis', RiskEngineController::class);
 Route::get('/api/schedule', [PlatformController::class, 'getDailySchedule'])
     ->middleware('throttle:120,1');
 
+// How the model has done against real results.
+Route::get('/api/track-record', [PlatformController::class, 'getTrackRecord'])
+    ->middleware('throttle:60,1');
+
 // AI analyst: each call costs an LLM request, so it is rate limited per IP.
 Route::post('/api/platform/chat', [PlatformController::class, 'askAI'])
     ->middleware('throttle:8,1');

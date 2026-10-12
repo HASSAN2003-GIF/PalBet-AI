@@ -6,6 +6,7 @@ use App\Models\Fixture;
 use App\Services\AnalystService;
 use App\Services\CompetitionCatalog;
 use App\Services\ScheduleService;
+use App\Services\TrackRecordService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -60,6 +61,19 @@ class PlatformController extends Controller
             now()->addSeconds(60),
             fn () => $schedule->forDay($date, $tz)
         );
+
+        return response()->json($payload);
+    }
+
+    // ==========================================
+    // TRACK RECORD
+    // ==========================================
+    public function getTrackRecord(Request $request, TrackRecordService $trackRecord): JsonResponse
+    {
+        $validated = $request->validate(['days' => ['sometimes', 'integer', 'in:7,30,90,365']]);
+        $days = (int) ($validated['days'] ?? 30);
+
+        $payload = Cache::remember("track-record:{$days}", now()->addMinutes(5), fn () => $trackRecord->summary($days));
 
         return response()->json($payload);
     }

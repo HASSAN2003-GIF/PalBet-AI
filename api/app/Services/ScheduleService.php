@@ -78,12 +78,14 @@ class ScheduleService
         $threeWay = (float) $f->odds_draw > 0;
 
         $state = match (true) {
+            $f->hasResult() => 'finished',
             $kickoff->greaterThan($now) => 'upcoming',
             $kickoff->addMinutes(self::IN_PLAY_MINUTES)->greaterThan($now) => 'in_play',
             default => 'finished',
         };
 
-        $selection = $f->is_value_bet ? $this->valueSelection($f) : null;
+        $selection = $f->valueSelection();
+        $actual = $f->actualOutcome();
 
         return [
             'id' => $f->id,
@@ -105,12 +107,19 @@ class ScheduleService
                 $this->market($f->market_2_label, $f->market_2_val),
             ])),
             'bookmaker' => $this->clean($f->bookmaker),
+            'result' => $actual === null ? null : [
+                'home' => $f->home_score,
+                'away' => $f->away_score,
+                'outcome' => $actual,
+                'favourite_won' => $f->favouriteOutcome() === $actual,
+            ],
             'value' => [
                 'is_value' => (bool) $f->is_value_bet,
                 'edge' => round((float) $f->edge, 4),
                 'selection' => $selection,
                 // Engine stakes are sized on a 1,000-unit bankroll; expose it as a share.
                 'bankroll_share' => $f->is_value_bet ? round((float) $f->stake / 1000, 4) : null,
+                'won' => ($selection && $actual) ? $selection['outcome'] === $actual : null,
             ],
             'rationale' => $this->clean($f->rationale),
         ];
@@ -145,32 +154,6 @@ class ScheduleService
             'draw' => $threeWay ? (int) $floored['draw'] : null,
             'away' => (int) $floored['away'],
         ];
-    }
-
-    /**
-     * Which outcome the engine flagged. Stored rows predate a selection column, but the
-     * engine's rationale always names the pick as "<Team> @ <price>x".
-     *
-     * @return array{outcome: string, label: string, price: float|null}|null
-     */
-    private function valueSelection(Fixture $f): ?array
-    {
-        $text = (string) $f->rationale;
-        $candidates = [
-            'home' => [$f->home_team, $f->odds_home],
-            'away' => [$f->away_team, $f->odds_away],
-            'draw' => ['Draw', $f->odds_draw],
-        ];
-
-        foreach ($candidates as $outcome => [$label, $price]) {
-            if ($label !== null && $label !== '' && str_contains($text, $label.' @ ')) {
-                $quoted = preg_match('/'.preg_quote($label, '/').' @ ([0-9.]+)x/', $text, $m) ? (float) $m[1] : null;
-
-                return ['outcome' => $outcome, 'label' => $label, 'price' => $quoted ?? $this->price($price)];
-            }
-        }
-
-        return null;
     }
 
     /**

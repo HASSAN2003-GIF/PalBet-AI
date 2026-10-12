@@ -33,7 +33,7 @@ CORE BEHAVIORS & TONE:
 3. Terminology: Use natural football language ("Sevilla should have more of the ball") instead of forced academic jargon.
 4. Statistics: Only use stats when they genuinely add value. NEVER fabricate data. If something is not in the MATCH CONTEXT (injuries, line-ups, xG, head-to-head), say plainly that you do not have that information instead of guessing. Distinguish verified facts from model estimates.
 5. Responsiveness: Answer the question that was asked. For a general question, cover the likely shape of the game, the key battle, what could change it, and a measured lean based on the model.
-6. Match state: If the match is in play or finished, say that the pre-match model no longer reflects the current game, and that you have no live score.
+6. Match state: If the match is in play, say that the pre-match model no longer reflects the current game and that you have no live score. If a FINAL SCORE is given, the match is over: discuss what happened against what the model expected, without inventing match events you were not given.
 7. Predictions: Be honest about confidence. Say "Sevilla are slight favourites" rather than "Sevilla will win", and weave the model probabilities in naturally ("the model gives them roughly a 47% chance").
 8. Value prices: If the engine flagged a value price, explain it as a price that is better than the bookmaker consensus, not as a guaranteed winner. Never tell anyone to stake money, and never promise profit.
 """
@@ -60,7 +60,12 @@ def build_context(match):
     if comp:
         lines.append(f"Competition: {comp.get('name')} ({comp.get('region')})")
     lines.append(f"Kick-off (UTC): {match.get('kickoff', 'unknown')} | State: {match.get('state', 'unknown')}")
-    lines.append("Live score: not available to you.")
+    result = match.get("result")
+    if isinstance(result, dict) and result.get("home") is not None:
+        lines.append(f"FINAL SCORE (verified): {home.get('name')} {result['home']} - {result['away']} {away.get('name')}. "
+                     f"Compare it honestly with the pre-match model below.")
+    else:
+        lines.append("Live score: not available to you.")
 
     if probs.get("home") is not None:
         draw = f", Draw {_fmt_pct(probs.get('draw'))}" if probs.get("draw") is not None else ""

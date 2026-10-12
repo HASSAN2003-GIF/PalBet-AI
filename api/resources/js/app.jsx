@@ -6,6 +6,7 @@ import Admin from './Admin';
 import MatchRow from './components/MatchRow';
 import ValueBoard from './components/ValueBoard';
 import AnalystPanel from './components/AnalystPanel';
+import TrackRecord from './components/TrackRecord';
 import { getSchedule, trackVisit } from './lib/api';
 import { addDays, dayOfMonth, hoursSince, localISODate, longDate, relativeDayName, timeAgo } from './lib/format';
 
@@ -207,7 +208,6 @@ function Matchday() {
     const [expandedId, setExpandedId] = useState(null);
     const [chatMatch, setChatMatch] = useState(null);
 
-    useEffect(() => { trackVisit(); }, []);
     useEffect(() => { writeUrlState({ date, view, competition: competitionKey }); }, [date, view, competitionKey]);
 
     useEffect(() => {
@@ -234,16 +234,15 @@ function Matchday() {
     const chatCompetition = chatMatch ? competitions.find((c) => c.key === chatMatch.competition_key) : null;
 
     return (
-        <div className="min-h-screen">
-            <header className="sticky top-0 z-30 border-b border-line bg-chalk/95 backdrop-blur">
-                <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-                    <Wordmark />
+        <>
+            <div className="border-b border-line">
+                <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
                     <DateStrip selected={date} onSelect={(d) => setDate(d)} />
                 </div>
-            </header>
+            </div>
 
             <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-16 pt-6 sm:px-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-10">
-                <aside className="lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:self-start lg:overflow-y-auto lg:pb-6">
+                <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto lg:pb-6">
                     {status === 'ready' && (
                         <LiveCompetitions
                             competitions={competitions}
@@ -286,36 +285,82 @@ function Matchday() {
                 </main>
             </div>
 
-            <footer className="border-t border-line">
-                <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-8 text-sm text-muted sm:flex-row sm:items-start sm:justify-between sm:px-6">
-                    <p className="max-w-2xl leading-relaxed">
-                        Win chances come from many bookmakers' prices with their margin removed. They are estimates, not promises.
-                        A value price is one priced better than the market thinks it's worth; it can still lose.
-                        For adults 18+. Never stake money you can't afford to lose.
-                    </p>
-                    <a href="#admin" className="shrink-0 underline decoration-line-strong underline-offset-4 hover:text-ink">Admin</a>
-                </div>
-            </footer>
-
             {chatMatch && <AnalystPanel match={chatMatch} competition={chatCompetition} onClose={() => setChatMatch(null)} />}
-            <Analytics />
-        </div>
+        </>
+    );
+}
+
+// ---------------------------------------------------------------- shell
+const ROUTES = { '': 'matches', '#record': 'record', '#admin': 'admin' };
+const routeFromHash = () => ROUTES[window.location.hash] ?? 'matches';
+
+function SiteHeader({ route }) {
+    const links = [
+        { href: '#', route: 'matches', label: 'Matches' },
+        { href: '#record', route: 'record', label: 'Track record' },
+    ];
+    return (
+        <header className="sticky top-0 z-30 border-b border-line bg-chalk/95 backdrop-blur">
+            <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+                <Wordmark />
+                <nav aria-label="Main" className="flex items-center gap-1 text-sm">
+                    {links.map((l) => (
+                        <a
+                            key={l.route}
+                            href={l.href}
+                            aria-current={route === l.route ? 'page' : undefined}
+                            className={`rounded-full px-3 py-1.5 font-medium transition-colors ${
+                                route === l.route ? 'bg-ink text-chalk' : 'text-ink-soft hover:text-ink'
+                            }`}
+                        >
+                            {l.label}
+                        </a>
+                    ))}
+                </nav>
+            </div>
+        </header>
+    );
+}
+
+function SiteFooter() {
+    return (
+        <footer className="border-t border-line">
+            <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-8 text-sm text-muted sm:flex-row sm:items-start sm:justify-between sm:px-6">
+                <p className="max-w-2xl leading-relaxed">
+                    Win chances come from many bookmakers' prices with their margin removed. They are estimates, not promises.
+                    A value price is one priced better than the market thinks it's worth; it can still lose.
+                    For adults 18+. Never stake money you can't afford to lose.
+                </p>
+                <a href="#admin" className="shrink-0 underline decoration-line-strong underline-offset-4 hover:text-ink">Admin</a>
+            </div>
+        </footer>
     );
 }
 
 function App() {
-    const [isAdmin, setIsAdmin] = useState(() => window.location.hash === '#admin');
+    const [route, setRoute] = useState(routeFromHash);
 
     useEffect(() => {
-        const onHash = () => setIsAdmin(window.location.hash === '#admin');
+        trackVisit();
+        const onHash = () => { setRoute(routeFromHash()); window.scrollTo(0, 0); };
         window.addEventListener('hashchange', onHash);
         return () => window.removeEventListener('hashchange', onHash);
     }, []);
 
-    if (isAdmin) {
-        return <Admin onClose={() => { window.location.hash = ''; setIsAdmin(false); }} />;
+    if (route === 'admin') {
+        return <Admin onClose={() => { window.location.hash = ''; }} />;
     }
-    return <Matchday />;
+
+    return (
+        <div className="flex min-h-screen flex-col">
+            <SiteHeader route={route} />
+            <div className="flex-1">
+                {route === 'record' ? <TrackRecord /> : <Matchday />}
+            </div>
+            <SiteFooter />
+            <Analytics />
+        </div>
+    );
 }
 
 const container = document.getElementById('app');

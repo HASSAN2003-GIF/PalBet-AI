@@ -50,6 +50,8 @@ export const userTimezone = () => {
 export const getSchedule = (date, signal) =>
     request(`/api/schedule?date=${encodeURIComponent(date)}&tz=${encodeURIComponent(userTimezone())}`, { signal });
 
+export const getTrackRecord = (days, signal) => request(`/api/track-record?days=${days}`, { signal });
+
 export const askAnalyst = (fixtureId, message, history) =>
     request('/api/platform/chat', { method: 'POST', body: { fixture_id: fixtureId, message, history } });
 

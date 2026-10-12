@@ -46,6 +46,17 @@ class FixtureFactory extends Factory
         ];
     }
 
+    /** A finished match with a final score. */
+    public function finished(int $home, int $away): static
+    {
+        return $this->state(fn () => [
+            'home_score' => $home,
+            'away_score' => $away,
+            'completed' => true,
+            'result_fetched_at' => now(),
+        ]);
+    }
+
     /** A value price on the away side, phrased exactly like the risk engine's rationale. */
     public function valueAway(float $price = 3.6, float $edge = 0.061): static
     {
