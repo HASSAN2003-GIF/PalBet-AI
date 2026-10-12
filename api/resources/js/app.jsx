@@ -1,305 +1,321 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Analytics } from '@vercel/analytics/react';
 import LiveCompetitions from './LiveCompetitions';
 import Admin from './Admin';
-import { Analytics } from "@vercel/analytics/react";
+import MatchRow from './components/MatchRow';
+import ValueBoard from './components/ValueBoard';
+import AnalystPanel from './components/AnalystPanel';
+import { getSchedule, trackVisit } from './lib/api';
+import { addDays, dayOfMonth, hoursSince, localISODate, longDate, relativeDayName, timeAgo } from './lib/format';
 
-// Smart API Router: Uses port 8000 locally, and the Render URL in production
-const API_URL = import.meta.env.DEV ? 'http://127.0.0.1:8000' : 'https://palbet-ai.onrender.com';
+// ---------------------------------------------------------------- URL state
+// date, view and competition live in the query string so a view can be shared or refreshed.
+function readUrlState() {
+    const q = new URLSearchParams(window.location.search);
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(q.get('date') || '') ? q.get('date') : localISODate();
+    return { date, view: q.get('view') === 'value' ? 'value' : 'all', competition: q.get('c') || null };
+}
 
-const requestJson = async (url, options = {}) => {
-    const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...(options.headers || {}) }});
-    let payload = null; try { payload = await response.json(); } catch { }
-    if (!response.ok) throw new Error(payload?.error || payload?.message || `Request failed (${response.status})`);
-    return payload;
-};
+function writeUrlState({ date, view, competition }) {
+    const q = new URLSearchParams();
+    if (date !== localISODate()) q.set('date', date);
+    if (view === 'value') q.set('view', 'value');
+    if (competition) q.set('c', competition);
+    const qs = q.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
+}
 
-// ================= AI ANALYST MODAL =================
-const AIChatModal = ({ match, onClose }) => {
-    const [messages, setMessages] = useState([{ role: 'ai', text: `I am the PalBet AI Analyst for **${match.home} vs ${match.away}**.\nAsk me about injuries, tactical formations, or the risk model output.` }]);
-    const [input, setInput] = useState('');
-    const [isTyping, setIsTyping] = useState(false);
-    const messagesEndRef = useRef(null);
-
-    useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isTyping]);
-
-    const sendMessage = async (e) => {
-        e.preventDefault();
-        const msg = input.trim();
-        if (!msg || isTyping) return;
-        setMessages(prev => [...prev, { role: 'user', text: msg }]);
-        setInput(''); setIsTyping(true);
-        try {
-            const data = await requestJson(`${API_URL}/api/platform/chat`, { 
-                method: 'POST', 
-                body: JSON.stringify({ matchContext: match, message: msg }) 
-            });
-            
-            setMessages(prev => [...prev, { role: 'ai', text: data.response || 'Analysis generated.' }]);
-        } catch (err) { 
-            setMessages(prev => [...prev, { role: 'ai', text: `Connection Error: ${err.message}` }]); 
-        } finally { setIsTyping(false); }
-    };
-
+// ---------------------------------------------------------------- pieces
+function Wordmark() {
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" onClick={onClose}>
-            <div className="flex h-[600px] w-full max-w-2xl flex-col rounded-2xl border border-[#202936] bg-[#0B0F15] shadow-2xl" onClick={e => e.stopPropagation()}>
-                <div className="flex h-16 items-center justify-between border-b border-[#202936] px-6 bg-[#10151D]">
-                    <div className="flex items-center gap-3">
-                        <div className="h-8 w-8 rounded-lg bg-[#2FD3C6] flex items-center justify-center font-black text-[#071013] text-xs">AI</div>
-                        <div><div className="text-sm font-bold text-white">PalBet AI</div><div className="text-[10px] text-[#707A8D]">{match.home} vs {match.away}</div></div>
-                    </div>
-                    <button onClick={onClose} className="text-[#707A8D] hover:text-white">✕</button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-6 space-y-4">
-                    {messages.map((m, i) => (
-                        <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${m.role === 'user' ? 'bg-[#2FD3C6] font-medium text-[#071013]' : 'border border-[#202936] bg-[#151B24] text-[#DDE3EC]'}`}>{m.text}</div>
-                        </div>
-                    ))}
-                    {isTyping && <div className="text-xs text-[#2FD3C6] animate-pulse">Running analysis engine...</div>}
-                    <div ref={messagesEndRef} />
-                </div>
-                <form onSubmit={sendMessage} className="p-4 border-t border-[#202936] bg-[#10151D] flex gap-2">
-                    <input type="text" value={input} onChange={e => setInput(e.target.value)} placeholder="Type your query..." className="flex-1 rounded-xl bg-[#151B24] border border-[#202936] px-4 py-3 text-sm text-white outline-none focus:border-[#2FD3C6]" />
-                    <button type="submit" disabled={isTyping} className="rounded-xl bg-[#2FD3C6] px-6 py-3 font-bold text-xs text-[#071013] transition hover:bg-[#25B9AE]">Send</button>
-                </form>
-            </div>
-        </div>
+        <a href="/" className="flex items-center gap-2 text-ink" aria-label="PalBet AI home">
+            <i className="yellow-card text-xl" aria-hidden="true" />
+            <span className="wide text-lg font-extrabold tracking-tight">PalBet AI</span>
+        </a>
     );
-};
+}
 
-// ================= MATCH ROW COMPONENT (PROGRESSIVE DISCLOSURE) =================
-const MatchRow = ({ match, setActiveChatMatch }) => {
-    const [isExpanded, setIsExpanded] = useState(false);
-    const isLive = match.status !== 'NS' && match.status !== 'TBD' && match.status !== 'FT';
-    
-    return (
-        <div className="bg-[#10151D] border-b border-[#202936] hover:bg-[#131924] transition-colors flex flex-col">
-            <div className="flex items-center px-4 py-3 cursor-pointer select-none group" onClick={() => setIsExpanded(!isExpanded)}>
-                <div className="w-14 shrink-0 border-r border-[#202936] pr-3 text-center">
-                    <div className={`text-[11px] font-black ${isLive ? 'text-rose-500 animate-pulse' : 'text-[#8B95A7]'}`}>{isLive ? 'LIVE' : match.time}</div>
-                    <div className="text-[9px] font-bold text-[#535D70] uppercase mt-0.5">{isLive ? match.time : match.status}</div>
-                </div>
-
-                <div className="flex-1 px-4 min-w-0 flex flex-col gap-1.5">
-                    <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2.5 truncate">
-                            {match.home_logo ? <img src={match.home_logo} className="w-4 h-4 object-contain" alt="" /> : <div className="w-4 h-4 rounded-full bg-[#1A222D]" />}
-                            <span className="text-[13px] font-bold text-[#F5F7FA] truncate">{match.home}</span>
-                        </div>
-                        <span className={`text-[13px] font-black ${isLive ? 'text-rose-500' : 'text-[#8B95A7]'}`}>{match.home_score ?? '-'}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2.5 truncate">
-                            {match.away_logo ? <img src={match.away_logo} className="w-4 h-4 object-contain" alt="" /> : <div className="w-4 h-4 rounded-full bg-[#1A222D]" />}
-                            <span className="text-[13px] font-bold text-[#F5F7FA] truncate">{match.away}</span>
-                        </div>
-                        <span className={`text-[13px] font-black ${isLive ? 'text-rose-500' : 'text-[#8B95A7]'}`}>{match.away_score ?? '-'}</span>
-                    </div>
-                </div>
-
-                <div className="w-[300px] shrink-0 pl-4 flex items-center justify-between border-l border-[#202936]">
-                    {match.has_odds && match.odds_home !== '-' ? (
-                        <>
-                            <div className="flex gap-1.5">
-                                <div className="w-11 py-1.5 bg-[#0B0F15] border border-[#202936] rounded text-center"><div className="text-[11px] font-bold text-[#2FD3C6]">{match.odds_home}</div></div>
-                                <div className="w-11 py-1.5 bg-[#0B0F15] border border-[#202936] rounded text-center"><div className="text-[11px] font-bold text-[#F4B740]">{match.odds_draw}</div></div>
-                                <div className="w-11 py-1.5 bg-[#0B0F15] border border-[#202936] rounded text-center"><div className="text-[11px] font-bold text-[#3B82F6]">{match.odds_away}</div></div>
-                            </div>
-                            <div className="flex flex-col items-end gap-1">
-                                <span className="text-[10px] font-black text-[#2FD3C6] bg-[#2FD3C6]/10 px-2 py-0.5 rounded border border-[#2FD3C6]/20">Pred: {match.pred_score}</span>
-                                <span className={`text-[10px] text-[#707A8D] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
-                            </div>
-                        </>
-                    ) : (
-                        <div className="w-full flex justify-center items-center gap-4">
-                            <span className="text-[10px] font-bold text-[#535D70] bg-[#1A222D] px-3 py-1.5 rounded uppercase tracking-widest border border-[#202936]">League Not Scouted</span>
-                            <span className={`text-[10px] text-[#707A8D] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            {isExpanded && (
-                <div className="bg-[#0B0F15] px-6 py-4 border-t border-[#202936] flex flex-col md:flex-row gap-6 shadow-inner cursor-default" onClick={e => e.stopPropagation()}>
-                    <div className="flex-1">
-                        {match.has_odds ? (
-                            <>
-                                <div className="flex justify-between text-[10px] font-bold text-[#707A8D] mb-1.5">
-                                    <span>1: {match.prob_home}%</span>
-                                    {match.prob_draw > 0 && <span>X: {match.prob_draw}%</span>}
-                                    <span>2: {match.prob_away}%</span>
-                                </div>
-                                <div className="flex h-1.5 rounded-full overflow-hidden bg-[#1A222D]">
-                                    <div style={{width: `${match.prob_home}%`}} className="bg-[#10B981]" />
-                                    {match.prob_draw > 0 && <div style={{width: `${match.prob_draw}%`}} className="bg-[#F59E0B]" /> }
-                                    <div style={{width: `${match.prob_away}%`}} className="bg-[#3B82F6]" />
-                                </div>
-                                <div className="mt-2 text-[10px] font-bold text-[#535D70] uppercase tracking-wider">{match.bookmaker}</div>
-                            </>
-                        ) : (
-                            <div className="flex h-full items-center justify-start text-[11px] font-bold text-[#535D70] uppercase tracking-widest">
-                                ⚠️ League Not Scouted By Upstream Odds Provider
-                            </div>
-                        )}
-                    </div>
-                    
-                    <div className="w-full md:w-48 shrink-0 flex flex-col gap-2 justify-center border-t md:border-t-0 md:border-l border-[#202936] pt-3 md:pt-0 md:pl-6">
-                        {match.has_odds && match.pred_score !== '-' ? (
-                            <div className="bg-[#2FD3C6]/10 text-[#2FD3C6] text-[11px] font-black px-3 py-1.5 rounded text-center border border-[#2FD3C6]/20">Pred: {match.pred_score}</div>
-                        ) : (
-                            <div className="bg-[#1A222D] text-[#535D70] text-[11px] font-black px-3 py-1.5 rounded text-center border border-[#202936]">No Model Data</div>
-                        )}
-                        <button 
-                            onClick={(e) => { e.stopPropagation(); setActiveChatMatch(match); }} 
-                            className="flex items-center justify-center gap-1 w-full text-[#707A8D] hover:text-white text-[10px] font-bold transition underline py-1"
-                        >
-                            Ask AI Analyst ↗
-                        </button>
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};
-
-// ================= MAIN APPLICATION =================
-function App() {
-    const [apiData, setApiData] = useState([]);
-    const [activeContext, setActiveContext] = useState({ sport: '', category: '', league: null });
-    const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-    const [loading, setLoading] = useState(true);
-    const [activeChatMatch, setActiveChatMatch] = useState(null);
-    const [showAdmin, setShowAdmin] = useState(false); // <-- ADDED ADMIN STATE
-
-    const calendarDates = useMemo(() => {
-        const dates = []; const today = new Date();
-        for (let i = 0; i < 7; i++) {
-            const next = new Date(today); next.setDate(today.getDate() + i);
-            dates.push(new Date(next.getTime() - (next.getTimezoneOffset() * 60000)).toISOString().split('T')[0]);
-        }
-        return dates;
-    }, []);
-
-    const formatDateLabel = (dateStr) => {
-        const dateObj = new Date(`${dateStr}T00:00:00`);
-        if (dateObj.toDateString() === new Date().toDateString()) return 'Today';
-        return dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    };
-
-    useEffect(() => {
-        setLoading(true);
-        
-        fetch(`${API_URL}/api/schedule?date=${selectedDate}`)
-            .then(res => res.json())
-            .then(data => {
-                const safeData = Array.isArray(data) ? data : [];
-                setApiData(safeData);
-                if (safeData.length > 0) {
-                    setActiveContext(prev => {
-                        if (!prev.sport && safeData.length > 0) {
-                            return { sport: safeData[0].sport, category: safeData[0].categories[0]?.name, league: safeData[0].categories[0]?.leagues[0] };
-                        }
-                        return prev;
-                    });
-                } else {
-                    setActiveContext({ sport: '', category: '', league: null });
-                }
-                setLoading(false);
-            }).catch(() => { setApiData([]); setLoading(false); });
-    }, [selectedDate]);
-
-    const currentMatches = useMemo(() => {
-        if (!activeContext.sport || !activeContext.league) return null;
-        const s = apiData.find(x => x.sport === activeContext.sport);
-        if (!s) return null;
-        const c = s.categories.find(x => x.name === activeContext.category);
-        if (!c) return null;
-        const l = c.leagues.find(x => x.id === activeContext.league.id || x.name === activeContext.league.name);
-        return l ? l.matches : null;
-    }, [apiData, activeContext]);
-
-    // <-- ADDED CONDITIONAL ADMIN ROUTING
-    if (showAdmin) {
-        return <Admin onClose={() => setShowAdmin(false)} />;
-    }
+function DateStrip({ selected, onSelect }) {
+    const today = localISODate();
+    const days = useMemo(() => Array.from({ length: 8 }, (_, i) => addDays(today, i - 1)), [today]);
 
     return (
-        <div className="flex h-screen bg-[#080B10] font-sans text-slate-100 overflow-hidden">
-            {activeChatMatch && <AIChatModal match={activeChatMatch} onClose={() => setActiveChatMatch(null)} />}
-
-              <Analytics /> {/* <-- VERCEL ANALYTICS COMPONENT */}  
-
-            <aside className="w-[280px] bg-[#0B0F15] border-r border-[#202936] flex flex-col shrink-0">
-                {/* <-- MODIFIED HEADER TO INCLUDE ADMIN GEAR BUTTON --> */}
-                <div className="h-16 flex items-center justify-between px-6 border-b border-[#202936] shrink-0">
-                    <span className="text-xl font-black tracking-tight text-white flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-[#2FD3C6]"></span>PalBet <span className="text-[#2FD3C6]">AI</span>
-                    </span>
-                    <button 
-                        onClick={() => {
-                            const pass = prompt("Enter Admin Password:");
-                            if (pass) {
-                                sessionStorage.setItem('admin_key', pass);
-                                setShowAdmin(true);
-                            }
-                        }} 
-                        className="text-[#707A8D] hover:text-[#2FD3C6] transition-colors bg-[#151B24] p-1.5 rounded-md"
-                        title="Admin Dashboard"
-                    >
-                        ⚙️
-                    </button>
-                </div>
-                <div className="flex-1 overflow-y-auto">
-                    <LiveCompetitions data={apiData} activeLeagueId={activeContext.league?.id} onSelect={(s, c, l) => setActiveContext({ sport: s, category: c, league: l })} />
-                </div>
-            </aside>
-
-            <div className="flex-1 flex flex-col min-w-0">
-                <header className="h-16 bg-[#0B0F15] border-b border-[#202936] flex items-center justify-between px-6 shrink-0 shadow-sm">
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar">
-                        {calendarDates.map(d => (
-                            <button key={d} onClick={() => setSelectedDate(d)} className={`px-4 py-1.5 rounded-full text-xs font-bold transition ${selectedDate === d ? 'bg-[#2FD3C6] text-[#071013]' : 'text-[#707A8D] hover:bg-[#151B24] hover:text-white'}`}>
-                                {formatDateLabel(d)}
+        <nav aria-label="Choose a day" className="no-scrollbar -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+            <ol className="flex gap-1">
+                {days.map((d) => {
+                    const active = d === selected;
+                    return (
+                        <li key={d}>
+                            <button
+                                type="button"
+                                onClick={() => onSelect(d)}
+                                aria-current={active ? 'date' : undefined}
+                                aria-label={longDate(d)}
+                                className={`flex w-14 flex-col items-center rounded-lg py-1.5 transition-colors ${
+                                    active ? 'bg-ink text-chalk' : 'text-ink-soft hover:bg-paper hover:text-ink'
+                                }`}
+                            >
+                                <span className="text-[11px] leading-tight">{relativeDayName(d)}</span>
+                                <span className="cond nums text-xl font-bold leading-tight">{dayOfMonth(d)}</span>
                             </button>
+                        </li>
+                    );
+                })}
+            </ol>
+        </nav>
+    );
+}
+
+function ViewToggle({ view, onChange, valueCount }) {
+    const options = [
+        { key: 'all', label: 'All matches' },
+        { key: 'value', label: 'Value prices', count: valueCount },
+    ];
+    return (
+        <div role="tablist" aria-label="What to show" className="inline-flex rounded-full border border-line-strong bg-paper p-1">
+            {options.map((o) => (
+                <button
+                    key={o.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={view === o.key}
+                    onClick={() => onChange(o.key)}
+                    className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                        view === o.key ? 'bg-ink text-chalk' : 'text-ink-soft hover:text-ink'
+                    }`}
+                >
+                    {o.key === 'value' && <i className="yellow-card text-[12px]" aria-hidden="true" />}
+                    {o.label}
+                    {o.count != null && <span className="cond nums font-bold">{o.count}</span>}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+function DaySummary({ data }) {
+    const { matches, competitions, value } = data.summary;
+    if (!matches) return null;
+    const parts = [
+        `${matches} ${matches === 1 ? 'match' : 'matches'} in ${competitions} ${competitions === 1 ? 'competition' : 'competitions'}`,
+        value ? `${value} with a value price` : 'no value prices',
+    ];
+    return <p className="mt-1 text-sm text-muted">{parts.join(', ')}.</p>;
+}
+
+function StaleNotice({ lastRun }) {
+    if (!lastRun || hoursSince(lastRun) < 12) return null;
+    return (
+        <p className="mt-4 rounded-lg border border-line-strong bg-paper px-4 py-3 text-sm text-ink-soft">
+            Prices were last updated {timeAgo(lastRun)}. Bookmaker odds move, so treat these numbers as a snapshot from then.
+        </p>
+    );
+}
+
+function LoadingState() {
+    return (
+        <div aria-busy="true" aria-label="Loading matches" className="flex flex-col gap-8">
+            {[4, 3, 2].map((rows, s) => (
+                <div key={s}>
+                    <div className="mb-3 h-5 w-48 animate-pulse rounded bg-line" />
+                    <div className="overflow-hidden rounded-xl border border-line">
+                        {Array.from({ length: rows }).map((_, r) => (
+                            <div key={r} className="flex items-center gap-4 border-b border-line px-5 py-4 last:border-b-0">
+                                <div className="h-4 w-10 animate-pulse rounded bg-line" />
+                                <div className="flex flex-1 flex-col gap-2">
+                                    <div className="h-3.5 w-40 animate-pulse rounded bg-line" />
+                                    <div className="h-3.5 w-32 animate-pulse rounded bg-line" />
+                                </div>
+                                <div className="hidden h-2 w-52 animate-pulse rounded-full bg-line sm:block" />
+                            </div>
                         ))}
                     </div>
-                </header>
+                </div>
+            ))}
+        </div>
+    );
+}
 
-                <main className="flex-1 overflow-y-auto p-6 bg-[#080B10]">
-                    <div className="max-w-5xl mx-auto">
-                        {activeContext.league && (
-                            <div className="mb-4 flex items-center gap-3">
-                                <div className="h-8 w-1 bg-[#2FD3C6] rounded-full"></div>
-                                <div>
-                                    <h1 className="text-lg font-black text-white uppercase tracking-wide">{activeContext.league.name}</h1>
-                                    <div className="text-[10px] font-bold text-[#707A8D] uppercase tracking-widest">{activeContext.sport} • {activeContext.category}</div>
-                                </div>
-                            </div>
+function ErrorState({ message, onRetry }) {
+    return (
+        <div role="alert" className="rounded-xl border border-alert/40 bg-paper px-6 py-10 text-center">
+            <p className="font-semibold">The matches didn't load.</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted">{message}</p>
+            <button type="button" onClick={onRetry} className="mt-4 rounded-full bg-ink px-5 py-2 text-sm font-semibold text-chalk hover:bg-home">
+                Try again
+            </button>
+        </div>
+    );
+}
+
+function EmptyDay({ date, onNextDay }) {
+    return (
+        <div className="rounded-xl border border-dashed border-line-strong px-6 py-12 text-center">
+            <p className="font-semibold">No matches on {longDate(date)}.</p>
+            <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
+                The engine hasn't priced any fixtures for this day yet.
+            </p>
+            <button type="button" onClick={onNextDay} className="mt-4 rounded-full border border-line-strong px-5 py-2 text-sm font-semibold hover:border-ink">
+                Show the next day
+            </button>
+        </div>
+    );
+}
+
+function CompetitionSection({ competition, expandedId, onToggle, onAsk, animate }) {
+    return (
+        <section aria-labelledby={`comp-${competition.key}`}>
+            <header className="mb-2 flex items-baseline justify-between gap-3 px-1">
+                <h2 id={`comp-${competition.key}`} className="flex min-w-0 items-baseline gap-2">
+                    <span className="semi-cond truncate text-lg font-bold">{competition.name}</span>
+                    <span className="shrink-0 text-sm text-muted">{competition.region}</span>
+                </h2>
+                {competition.value_count > 0 && (
+                    <span className="flex shrink-0 items-center gap-1 text-xs text-card-ink">
+                        <i className="yellow-card text-[12px]" aria-hidden="true" />
+                        {competition.value_count} value
+                    </span>
+                )}
+            </header>
+            <ul className="overflow-hidden rounded-xl border border-line bg-chalk">
+                {competition.matches.map((m) => (
+                    <MatchRow
+                        key={m.id}
+                        match={m}
+                        expanded={expandedId === m.id}
+                        onToggle={() => onToggle(m.id)}
+                        onAsk={onAsk}
+                        animate={animate}
+                    />
+                ))}
+            </ul>
+        </section>
+    );
+}
+
+// ---------------------------------------------------------------- app
+function Matchday() {
+    const initial = useMemo(readUrlState, []);
+    const [date, setDate] = useState(initial.date);
+    const [view, setView] = useState(initial.view);
+    const [competitionKey, setCompetitionKey] = useState(initial.competition);
+    const [data, setData] = useState(null);
+    const [status, setStatus] = useState('loading');
+    const [error, setError] = useState(null);
+    const [reload, setReload] = useState(0);
+    const [expandedId, setExpandedId] = useState(null);
+    const [chatMatch, setChatMatch] = useState(null);
+
+    useEffect(() => { trackVisit(); }, []);
+    useEffect(() => { writeUrlState({ date, view, competition: competitionKey }); }, [date, view, competitionKey]);
+
+    useEffect(() => {
+        const controller = new AbortController();
+        setStatus('loading');
+        setExpandedId(null);
+        getSchedule(date, controller.signal)
+            .then((payload) => { setData(payload); setStatus('ready'); })
+            .catch((err) => {
+                if (err.name === 'AbortError') return;
+                setError(err.message);
+                setStatus('error');
+            });
+        return () => controller.abort();
+    }, [date, reload]);
+
+    const competitions = data?.competitions ?? [];
+    // A competition filter from the URL may not play on the newly chosen day.
+    const activeKey = competitions.some((c) => c.key === competitionKey) ? competitionKey : null;
+    const visible = activeKey ? competitions.filter((c) => c.key === activeKey) : competitions;
+    const visibleValue = visible.reduce((n, c) => n + c.value_count, 0);
+
+    const toggle = useCallback((id) => setExpandedId((cur) => (cur === id ? null : id)), []);
+    const chatCompetition = chatMatch ? competitions.find((c) => c.key === chatMatch.competition_key) : null;
+
+    return (
+        <div className="min-h-screen">
+            <header className="sticky top-0 z-30 border-b border-line bg-chalk/95 backdrop-blur">
+                <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                    <Wordmark />
+                    <DateStrip selected={date} onSelect={(d) => setDate(d)} />
+                </div>
+            </header>
+
+            <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-16 pt-6 sm:px-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-10">
+                <aside className="lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:self-start lg:overflow-y-auto lg:pb-6">
+                    {status === 'ready' && (
+                        <LiveCompetitions
+                            competitions={competitions}
+                            summary={data.summary}
+                            activeKey={activeKey}
+                            onSelect={setCompetitionKey}
+                        />
+                    )}
+                </aside>
+
+                <main id="main" className="min-w-0">
+                    <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                            <h1 className="semi-cond text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl">{longDate(date)}</h1>
+                            {status === 'ready' && <DaySummary data={data} />}
+                        </div>
+                        {status === 'ready' && data.summary.matches > 0 && (
+                            <ViewToggle view={view} onChange={setView} valueCount={visibleValue} />
                         )}
+                    </div>
 
-                        {loading ? (
-                            <div className="flex justify-center items-center h-64 text-[10px] font-bold uppercase tracking-widest text-[#535D70] animate-pulse">Syncing Providers...</div>
-                        ) : !activeContext.league ? (
-                            <div className="flex justify-center items-center h-64 text-xs font-bold text-[#535D70]">Select a competition from the sidebar.</div>
-                        ) : currentMatches === null ? (
-                            <div className="flex flex-col justify-center items-center h-64 border border-dashed border-[#202936] rounded-2xl">
-                                <span className="text-2xl mb-2">📅</span>
-                                <span className="text-xs font-bold text-[#707A8D]">No fixtures available for {activeContext.league.name} on this date.</span>
-                            </div>
-                        ) : (
-                            <div className="bg-[#10151D] border border-[#202936] rounded-xl overflow-hidden shadow-lg">
-                                {currentMatches.map(m => (
-                                    <MatchRow key={m.id} match={m} setActiveChatMatch={setActiveChatMatch} />
-                                ))}
-                            </div>
+                    {status === 'ready' && <StaleNotice lastRun={data.last_engine_run} />}
+
+                    <div className="mt-6">
+                        {status === 'loading' && <LoadingState />}
+                        {status === 'error' && <ErrorState message={error} onRetry={() => setReload((n) => n + 1)} />}
+                        {status === 'ready' && data.summary.matches === 0 && <EmptyDay date={date} onNextDay={() => setDate(addDays(date, 1))} />}
+                        {status === 'ready' && data.summary.matches > 0 && (
+                            view === 'value' ? (
+                                <ValueBoard competitions={visible} expandedId={expandedId} onToggle={toggle} onAsk={setChatMatch} animate />
+                            ) : (
+                                <div className="flex flex-col gap-8">
+                                    {visible.map((c) => (
+                                        <CompetitionSection key={c.key} competition={c} expandedId={expandedId} onToggle={toggle} onAsk={setChatMatch} animate />
+                                    ))}
+                                </div>
+                            )
                         )}
                     </div>
                 </main>
             </div>
+
+            <footer className="border-t border-line">
+                <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-8 text-sm text-muted sm:flex-row sm:items-start sm:justify-between sm:px-6">
+                    <p className="max-w-2xl leading-relaxed">
+                        Win chances come from many bookmakers' prices with their margin removed. They are estimates, not promises.
+                        A value price is one priced better than the market thinks it's worth; it can still lose.
+                        For adults 18+. Never stake money you can't afford to lose.
+                    </p>
+                    <a href="#admin" className="shrink-0 underline decoration-line-strong underline-offset-4 hover:text-ink">Admin</a>
+                </div>
+            </footer>
+
+            {chatMatch && <AnalystPanel match={chatMatch} competition={chatCompetition} onClose={() => setChatMatch(null)} />}
+            <Analytics />
         </div>
     );
+}
+
+function App() {
+    const [isAdmin, setIsAdmin] = useState(() => window.location.hash === '#admin');
+
+    useEffect(() => {
+        const onHash = () => setIsAdmin(window.location.hash === '#admin');
+        window.addEventListener('hashchange', onHash);
+        return () => window.removeEventListener('hashchange', onHash);
+    }, []);
+
+    if (isAdmin) {
+        return <Admin onClose={() => { window.location.hash = ''; setIsAdmin(false); }} />;
+    }
+    return <Matchday />;
 }
 
 const container = document.getElementById('app');

@@ -1,7 +1,85 @@
-@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&display=swap');
 @import "tailwindcss";
 
-body {
-    font-family: 'Roboto', sans-serif;
-    background-color: #16181C;
+/*
+ * PalBet AI design tokens.
+ * Chalk paper, pitch-green ink, and one loud colour: the referee's yellow card,
+ * reserved for value prices. Home / draw / away always use pitch / sand / navy.
+ */
+@theme {
+    --font-sans: "Archivo", ui-sans-serif, system-ui, sans-serif;
+
+    --color-chalk: #F1F3EE;
+    --color-paper: #FBFCFA;
+    --color-line: #D9DED6;
+    --color-line-strong: #BCC4B9;
+    --color-ink: #13211B;
+    --color-ink-soft: #3C4A43;
+    --color-muted: #5E6B63;
+
+    --color-home: #0F5C3A;
+    --color-home-soft: #DCEBE2;
+    --color-draw: #CDBF9A;
+    --color-draw-ink: #6B5D36;
+    --color-away: #27408B;
+    --color-away-soft: #DFE4F3;
+
+    --color-card: #F5C518;
+    --color-card-ink: #4A3B00;
+    --color-alert: #A33A2A;
+}
+
+@layer base {
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+        @apply bg-chalk text-ink antialiased;
+        font-family: var(--font-sans);
+        font-variation-settings: "wdth" 100;
+        font-feature-settings: "tnum" 0;
+    }
+    :focus-visible {
+        outline: 2px solid var(--color-home);
+        outline-offset: 2px;
+        border-radius: 4px;
+    }
+    ::selection { background: var(--color-card); color: var(--color-ink); }
+}
+
+/* Archivo's width axis does the scoreboard work: condensed for times, scores, numbers. */
+.cond { font-stretch: 72%; font-variation-settings: "wdth" 72; }
+.semi-cond { font-stretch: 88%; font-variation-settings: "wdth" 88; }
+.wide { font-stretch: 118%; font-variation-settings: "wdth" 118; }
+.nums { font-variant-numeric: tabular-nums; }
+
+/* The yellow card: a small, slightly tilted rectangle that marks a value price. */
+.yellow-card {
+    display: inline-block;
+    width: 0.62em;
+    height: 0.86em;
+    border-radius: 1.5px;
+    background: var(--color-card);
+    box-shadow: 0 0 0 1px rgb(74 59 0 / 0.18);
+    transform: rotate(9deg);
+    flex-shrink: 0;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+
+/* One orchestrated moment: probability bars draw in when a day loads. */
+@keyframes strip-in { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.strip-animate > span { transform-origin: left; animation: strip-in 520ms cubic-bezier(.2,.7,.2,1) both; }
+.strip-animate > span:nth-child(2) { animation-delay: 60ms; }
+.strip-animate > span:nth-child(3) { animation-delay: 120ms; }
+
+@keyframes panel-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.panel-in { animation: panel-in 220ms ease-out both; }
+
+@keyframes dots { 0%, 20% { opacity: .2 } 50% { opacity: 1 } 100% { opacity: .2 } }
+.typing span { animation: dots 1.2s infinite; }
+.typing span:nth-child(2) { animation-delay: .2s; }
+.typing span:nth-child(3) { animation-delay: .4s; }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
