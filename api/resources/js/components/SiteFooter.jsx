@@ -5,7 +5,7 @@ const LINKS = [
     { href: '#', label: 'Matches' },
     { href: '#record', label: 'Track record' },
     { href: '#slips', label: 'My slips' },
-    { href: '#admin', label: 'Admin' },
+    // The admin page is deliberately not linked anywhere: staff open it by address.
 ];
 
 /** Shared footer for every page (main app and admin). */
