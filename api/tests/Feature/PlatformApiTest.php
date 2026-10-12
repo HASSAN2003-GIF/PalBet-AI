@@ -124,6 +124,8 @@ class PlatformApiTest extends TestCase
             ->assertJsonPath('visitors.today', 7)
             ->assertJsonCount(14, 'visitors.last_14_days')
             ->assertJsonCount(1, 'top_value')
+            ->assertJsonPath('players.accounts', 0)
+            ->assertJsonPath('players.pending_slips', 0)
             ->assertJsonPath('top_value.0.competition', 'Premier League');
     }
 

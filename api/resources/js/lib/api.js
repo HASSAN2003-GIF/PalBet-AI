@@ -13,8 +13,14 @@ export class ApiError extends Error {
     }
 }
 
+// ---------------------------------------------------------------- sign-in token
+const TOKEN_KEY = 'pb_token';
+export const getToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
+export const setToken = (t) => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ } };
+
 async function request(path, { method = 'GET', body, headers = {}, signal } = {}) {
     let response;
+    const token = getToken();
     try {
         response = await fetch(`${API_URL}${path}`, {
             method,
@@ -22,6 +28,7 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
             headers: {
                 Accept: 'application/json',
                 ...(body ? { 'Content-Type': 'application/json' } : {}),
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 ...headers,
             },
             body: body ? JSON.stringify(body) : undefined,
@@ -35,9 +42,11 @@ async function request(path, { method = 'GET', body, headers = {}, signal } = {}
     try { payload = await response.json(); } catch { /* empty body */ }
 
     if (!response.ok) {
+        // Validation errors: show the first field message rather than Laravel's summary line.
+        const firstFieldError = payload?.errors && Object.values(payload.errors)[0]?.[0];
         const message = response.status === 429
             ? 'Too many requests in a short time. Wait a minute and try again.'
-            : payload?.message || payload?.error || `The server returned an error (${response.status}).`;
+            : firstFieldError || payload?.message || payload?.error || `The server returned an error (${response.status}).`;
         throw new ApiError(message, response.status, payload);
     }
     return payload;
@@ -54,6 +63,15 @@ export const getTrackRecord = (days, signal) => request(`/api/track-record?days=
 
 export const askAnalyst = (fixtureId, message, history) =>
     request('/api/platform/chat', { method: 'POST', body: { fixture_id: fixtureId, message, history } });
+
+// ---------------------------------------------------------------- accounts + slips
+export const register = (name, email, password, adult) =>
+    request('/api/auth/register', { method: 'POST', body: { name, email, password, adult } });
+export const login = (email, password) => request('/api/auth/login', { method: 'POST', body: { email, password } });
+export const logout = () => request('/api/auth/logout', { method: 'POST' });
+export const getMe = () => request('/api/me');
+export const getSlips = () => request('/api/slips');
+export const placeSlip = (stake, selections) => request('/api/slips', { method: 'POST', body: { stake, selections } });
 
 export const getAdminStats = (key) =>
     request('/api/platform/admin-stats', { headers: { 'X-Admin-Key': key } });

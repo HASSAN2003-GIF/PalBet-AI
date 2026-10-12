@@ -7,6 +7,10 @@ import MatchRow from './components/MatchRow';
 import ValueBoard from './components/ValueBoard';
 import AnalystPanel from './components/AnalystPanel';
 import TrackRecord from './components/TrackRecord';
+import MySlips from './components/MySlips';
+import SlipPanel from './components/SlipPanel';
+import AuthDialog from './components/AuthDialog';
+import { AccountProvider, tokens, useAccount } from './lib/account';
 import { getSchedule, trackVisit } from './lib/api';
 import { addDays, dayOfMonth, hoursSince, localISODate, longDate, relativeDayName, timeAgo } from './lib/format';
 
@@ -291,32 +295,59 @@ function Matchday() {
 }
 
 // ---------------------------------------------------------------- shell
-const ROUTES = { '': 'matches', '#record': 'record', '#admin': 'admin' };
+const ROUTES = { '': 'matches', '#record': 'record', '#slips': 'slips', '#admin': 'admin' };
 const routeFromHash = () => ROUTES[window.location.hash] ?? 'matches';
+
+function AccountArea() {
+    const { user, checking, setAuthOpen, signOut } = useAccount();
+    if (checking) return <span className="h-8 w-20" aria-hidden="true" />;
+    if (!user) {
+        return (
+            <button type="button" onClick={() => setAuthOpen('signin')}
+                    className="rounded-full border border-line-strong px-3.5 py-1.5 text-sm font-semibold hover:border-ink">
+                Sign in
+            </button>
+        );
+    }
+    return (
+        <div className="flex items-center gap-2">
+            <a href="#slips" className="flex items-center gap-1.5 rounded-full bg-paper px-3 py-1.5 text-sm ring-1 ring-line-strong hover:ring-ink" title={`Signed in as ${user.name}`}>
+                <span className="cond nums font-extrabold">{tokens(user.balance)}</span>
+                <span className="text-muted">tokens</span>
+            </a>
+            <button type="button" onClick={signOut} className="hidden text-sm text-muted hover:text-ink sm:inline">Sign out</button>
+        </div>
+    );
+}
 
 function SiteHeader({ route }) {
     const links = [
-        { href: '#', route: 'matches', label: 'Matches' },
-        { href: '#record', route: 'record', label: 'Track record' },
+        { href: '#', route: 'matches', label: 'Matches', short: 'Matches' },
+        { href: '#record', route: 'record', label: 'Track record', short: 'Record' },
+        { href: '#slips', route: 'slips', label: 'My slips', short: 'Slips' },
     ];
     return (
         <header className="sticky top-0 z-30 border-b border-line bg-chalk/95 backdrop-blur">
-            <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+            <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
                 <Wordmark />
-                <nav aria-label="Main" className="flex items-center gap-1 text-sm">
-                    {links.map((l) => (
-                        <a
-                            key={l.route}
-                            href={l.href}
-                            aria-current={route === l.route ? 'page' : undefined}
-                            className={`rounded-full px-3 py-1.5 font-medium transition-colors ${
-                                route === l.route ? 'bg-ink text-chalk' : 'text-ink-soft hover:text-ink'
-                            }`}
-                        >
-                            {l.label}
-                        </a>
-                    ))}
-                </nav>
+                <div className="order-last flex w-full items-center justify-between gap-2 sm:order-none sm:w-auto sm:gap-4">
+                    <nav aria-label="Main" className="flex items-center gap-1 text-sm">
+                        {links.map((l) => (
+                            <a
+                                key={l.route}
+                                href={l.href}
+                                aria-current={route === l.route ? 'page' : undefined}
+                                className={`rounded-full px-3 py-1.5 font-medium transition-colors ${
+                                    route === l.route ? 'bg-ink text-chalk' : 'text-ink-soft hover:text-ink'
+                                }`}
+                            >
+                                <span className="sm:hidden">{l.short}</span>
+                                <span className="hidden sm:inline">{l.label}</span>
+                            </a>
+                        ))}
+                    </nav>
+                    <AccountArea />
+                </div>
             </div>
         </header>
     );
@@ -352,14 +383,20 @@ function App() {
     }
 
     return (
-        <div className="flex min-h-screen flex-col">
-            <SiteHeader route={route} />
-            <div className="flex-1">
-                {route === 'record' ? <TrackRecord /> : <Matchday />}
+        <AccountProvider>
+            <div className="flex min-h-screen flex-col">
+                <SiteHeader route={route} />
+                <div className="flex-1 pb-20">
+                    {route === 'record' && <TrackRecord />}
+                    {route === 'slips' && <MySlips />}
+                    {route === 'matches' && <Matchday />}
+                </div>
+                <SiteFooter />
+                <SlipPanel />
+                <AuthDialog />
+                <Analytics />
             </div>
-            <SiteFooter />
-            <Analytics />
-        </div>
+        </AccountProvider>
     );
 }
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import ProbabilityStrip from './ProbabilityStrip';
 import { kickoffTime, outcomeName, percent, price } from '../lib/format';
+import { useAccount } from '../lib/account';
 
 const dash = (s) => (s ? s.replace(' - ', '–') : null);
 
@@ -111,6 +112,9 @@ function MatchDetail({ id, match, onAsk }) {
     const v = match.value;
     const outcomes = ['home', ...(match.three_way ? ['draw'] : []), 'away'];
     const selected = v?.is_value ? v.selection?.outcome : null;
+    const { togglePick, pickFor } = useAccount();
+    const canPick = match.state === 'upcoming';
+    const picked = pickFor(match.id);
 
     return (
         <div id={id} className="grid gap-6 border-t border-line px-4 pb-6 pt-5 sm:px-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:gap-10">
@@ -121,7 +125,7 @@ function MatchDetail({ id, match, onAsk }) {
                         <tr className="text-left text-xs text-muted">
                             <th scope="col" className="pb-2 font-medium">Result</th>
                             <th scope="col" className="pb-2 text-right font-medium">Model chance</th>
-                            <th scope="col" className="pb-2 text-right font-medium">Best price</th>
+                            <th scope="col" className="pb-2 text-right font-medium">{canPick ? 'Best price, tap to pick' : 'Best price'}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -138,7 +142,23 @@ function MatchDetail({ id, match, onAsk }) {
                                     </span>
                                 </th>
                                 <td className="cond nums py-2.5 text-right text-base font-bold">{match.probabilities[o]}%</td>
-                                <td className="cond nums py-2.5 text-right text-base font-bold">{price(match.odds[o])}</td>
+                                <td className="py-1.5 pl-2 text-right">
+                                    {canPick && match.odds[o] ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => togglePick(match, o)}
+                                            aria-pressed={picked === o}
+                                            aria-label={`${picked === o ? 'Remove' : 'Add'} ${o === 'draw' ? 'the draw' : outcomeName(match, o)} at ${price(match.odds[o])} ${picked === o ? 'from' : 'to'} your slip`}
+                                            className={`cond nums min-w-16 rounded-md border px-2.5 py-1.5 text-base font-bold transition-colors ${
+                                                picked === o ? 'border-ink bg-ink text-chalk' : 'border-line-strong bg-chalk hover:border-ink'
+                                            }`}
+                                        >
+                                            {price(match.odds[o])}
+                                        </button>
+                                    ) : (
+                                        <span className="cond nums text-base font-bold">{price(match.odds[o])}</span>
+                                    )}
+                                </td>
                             </tr>
                         ))}
                     </tbody>

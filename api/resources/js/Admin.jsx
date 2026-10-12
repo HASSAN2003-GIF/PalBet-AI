@@ -151,6 +151,18 @@ export default function Admin({ onClose }) {
                             </dl>
                         </section>
 
+                        {stats.players && (
+                            <section aria-labelledby="players">
+                                <h2 id="players" className="semi-cond mb-5 text-xl font-bold">Players</h2>
+                                <dl className="grid grid-cols-2 gap-6 md:grid-cols-4">
+                                    <Stat label="Accounts" value={stats.players.accounts} />
+                                    <Stat label="New today" value={stats.players.new_today} />
+                                    <Stat label="Slips waiting" value={stats.players.pending_slips} />
+                                    <Stat label="Slips placed" value={stats.players.slips_total} />
+                                </dl>
+                            </section>
+                        )}
+
                         <section aria-labelledby="top-value">
                             <h2 id="top-value" className="semi-cond mb-3 text-xl font-bold">Biggest upcoming edges</h2>
                             {stats.top_value.length === 0 ? (

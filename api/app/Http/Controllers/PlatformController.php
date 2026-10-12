@@ -164,6 +164,12 @@ class PlatformController extends Controller
                 'upcoming_competitions' => (clone $upcoming)->distinct()->count('sport_key'),
                 'last_engine_run' => $lastRun ? CarbonImmutable::parse($lastRun)->toIso8601ZuluString() : null,
             ],
+            'players' => [
+                'accounts' => DB::table('users')->count(),
+                'new_today' => DB::table('users')->where('created_at', '>=', $now->copy()->startOfDay())->count(),
+                'pending_slips' => DB::table('bets')->where('status', 'pending')->count(),
+                'slips_total' => DB::table('bets')->count(),
+            ],
             'top_value' => $topValue,
         ]);
     }

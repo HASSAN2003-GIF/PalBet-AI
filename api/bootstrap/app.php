@@ -17,7 +17,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'api/*',
         ]);
         $middleware->trustProxies(at: '*');
+        // There is no server-rendered login page: signed-out API calls get a JSON 401.
+        $middleware->redirectGuestsTo(fn ($request) => $request->is('api/*') ? null : '/');
     })
     ->withExceptions(function (Exceptions $exceptions) {
-        //
+        // Everything under /api answers in JSON (401, 404, 422...) even if the client forgets
+        // the Accept header, instead of redirecting to a login page that doesn't exist.
+        $exceptions->shouldRenderJsonWhen(fn ($request) => $request->is('api/*') || $request->expectsJson());
     })->create();
