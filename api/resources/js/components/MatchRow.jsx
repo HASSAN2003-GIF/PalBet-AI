@@ -41,7 +41,7 @@ function StateLabel({ match }) {
 
 function FormDots({ form }) {
     if (!form) return null;
-    const tone = { W: 'bg-home text-white', D: 'bg-draw text-ink', L: 'bg-ink-soft/15 text-ink-soft' };
+    const tone = { W: 'bg-home text-on-home', D: 'bg-draw text-on-draw', L: 'bg-ink-soft/15 text-ink-soft' };
     const word = { W: 'win', D: 'draw', L: 'loss' };
     return (
         <span className="flex gap-0.5" role="img" aria-label={`Recent results: ${form.results.map((r) => word[r]).join(', ')}`}>

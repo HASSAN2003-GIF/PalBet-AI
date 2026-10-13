@@ -10,6 +10,22 @@
     <meta property="og:site_name" content="PAL-PREDICT" />
     <meta property="og:title" content="PAL-PREDICT: football win chances and value prices" />
     <meta name="theme-color" content="#F1F3EE" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      // Theme before first paint (no flash): a saved choice wins, otherwise follow the system.
+      // Kept in step with resources/js/lib/theme.js.
+      (function () {
+        var theme = null;
+        try { theme = localStorage.getItem('pp_theme'); } catch (e) {}
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        var root = document.documentElement;
+        root.dataset.theme = theme;
+        root.style.colorScheme = theme;
+        if (theme === 'dark') document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0D1411');
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

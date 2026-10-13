@@ -128,7 +128,7 @@ export default function AnalystPanel({ match, competition, onClose }) {
     }
 
     return (
-        <div className="fixed inset-0 z-40 flex justify-end bg-ink/40" onClick={onClose}>
+        <div className="fixed inset-0 z-40 flex justify-end bg-scrim" onClick={onClose}>
             <aside
                 ref={panelRef}
                 role="dialog"
@@ -136,7 +136,7 @@ export default function AnalystPanel({ match, competition, onClose }) {
                 aria-labelledby="analyst-title"
                 onKeyDown={trapFocus}
                 onClick={(e) => e.stopPropagation()}
-                className="panel-in flex h-full w-full flex-col bg-paper shadow-[-12px_0_40px_rgba(19,33,27,0.18)] sm:max-w-[30rem]"
+                className="panel-in flex h-full w-full flex-col bg-paper shadow-[-12px_0_40px_var(--color-shadow)] sm:max-w-[30rem]"
             >
                 <header className="border-b border-line px-5 pb-4 pt-5">
                     <div className="flex items-start justify-between gap-4">
@@ -227,7 +227,7 @@ export default function AnalystPanel({ match, competition, onClose }) {
                         <button
                             type="submit"
                             disabled={pending || !input.trim()}
-                            className="h-11 rounded-full bg-home px-5 text-sm font-semibold text-white transition hover:bg-ink disabled:cursor-not-allowed disabled:opacity-40"
+                            className="h-11 rounded-full bg-home px-5 text-sm font-semibold text-on-home transition hover:bg-ink disabled:cursor-not-allowed disabled:opacity-40"
                         >
                             Ask
                         </button>

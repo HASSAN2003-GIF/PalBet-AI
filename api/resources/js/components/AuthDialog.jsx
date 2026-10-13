@@ -58,7 +58,7 @@ export default function AuthDialog() {
     }
 
     return (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/40 p-4" onClick={() => setAuthOpen(null)}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-scrim p-4" onClick={() => setAuthOpen(null)}>
             <div
                 ref={dialogRef}
                 role="dialog"
@@ -66,7 +66,7 @@ export default function AuthDialog() {
                 aria-labelledby="auth-title"
                 onKeyDown={trapFocus}
                 onClick={(e) => e.stopPropagation()}
-                className="w-full max-w-sm rounded-2xl bg-paper p-6 shadow-[0_20px_60px_rgba(19,33,27,0.25)]"
+                className="w-full max-w-sm rounded-2xl bg-paper p-6 shadow-[0_20px_60px_var(--color-shadow)]"
             >
                 <div className="mb-5 flex items-start justify-between gap-4">
                     <div>

@@ -32,10 +32,51 @@
     --color-card: #F5C518;
     --color-card-ink: #4A3B00;
     --color-alert: #A33A2A;
+
+    /* Text that sits ON a filled colour, and the layers above the page. */
+    --color-on-home: #FFFFFF;
+    --color-on-draw: #13211B;
+    --color-on-card: #13211B;
+    --color-scrim: rgb(19 33 27 / 0.4);
+    --color-shadow: rgb(19 33 27 / 0.2);
+}
+
+/*
+ * Dark theme: night match under floodlights, not an inverted page. The chalk paper becomes
+ * a deep pitch-green black; surfaces step up in lightness (page < raised < lines) instead of
+ * relying on shadows; the data colours are lifted just enough to stay readable on dark while
+ * keeping their meaning (pitch = home, sand = draw, navy = away, yellow card = value).
+ * Every text colour here was checked against WCAG AA (4.5:1) on both page and raised surfaces.
+ */
+:root[data-theme="dark"] {
+    --color-pal: #4BA9F2;
+    --color-pal-ink: #8FCBF7;
+    --color-chalk: #0D1411;
+    --color-paper: #151E1A;
+    --color-line: #25312B;
+    --color-line-strong: #46574E;
+    --color-ink: #E7EDE8;
+    --color-ink-soft: #BCC8C0;
+    --color-muted: #95A49B;
+
+    --color-home: #4DB583;
+    --color-home-soft: #13291E;
+    --color-draw: #A99A72;
+    --color-draw-ink: #D8C99E;
+    --color-away: #8AA4EE;
+    --color-away-soft: #18213A;
+
+    --color-card-ink: #F3D560;
+    --color-alert: #F2806B;
+
+    --color-on-home: #04110A;
+    --color-scrim: rgb(2 6 4 / 0.66);
+    --color-shadow: rgb(0 0 0 / 0.5);
 }
 
 @layer base {
-    html { -webkit-text-size-adjust: 100%; }
+    html { -webkit-text-size-adjust: 100%; color-scheme: light; }
+    :root[data-theme="dark"] { color-scheme: dark; }
     body {
         @apply bg-chalk text-ink antialiased;
         font-family: var(--font-sans);
@@ -47,8 +88,14 @@
         outline-offset: 2px;
         border-radius: 4px;
     }
-    ::selection { background: var(--color-card); color: var(--color-ink); }
+    ::selection { background: var(--color-card); color: var(--color-on-card); }
 }
+
+/* Search field: our own clear button replaces the browser's. */
+.search-input::-webkit-search-cancel-button,
+.search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.search-spinner { animation: spin 0.8s linear infinite; }
 
 /* Archivo's width axis does the scoreboard work: condensed for times, scores, numbers. */
 .cond { font-stretch: 72%; font-variation-settings: "wdth" 72; }

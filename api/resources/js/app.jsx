@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Analytics } from '@vercel/analytics/react';
 import LiveCompetitions from './LiveCompetitions';
@@ -11,6 +11,10 @@ import MySlips from './components/MySlips';
 import SlipPanel from './components/SlipPanel';
 import AuthDialog from './components/AuthDialog';
 import SiteFooter from './components/SiteFooter';
+import SearchBox from './components/SearchBox';
+import SearchResults from './components/SearchResults';
+import ThemeToggle from './components/ThemeToggle';
+import { cleanQuery, useMatchSearch } from './lib/useMatchSearch';
 import { HomeLink } from './components/Brand';
 import { AccountProvider, tokens, useAccount } from './lib/account';
 import { getSchedule, trackVisit } from './lib/api';
@@ -21,11 +25,17 @@ import { addDays, dayOfMonth, hoursSince, localISODate, longDate, relativeDayNam
 function readUrlState() {
     const q = new URLSearchParams(window.location.search);
     const date = /^\d{4}-\d{2}-\d{2}$/.test(q.get('date') || '') ? q.get('date') : localISODate();
-    return { date, view: q.get('view') === 'value' ? 'value' : 'all', competition: q.get('c') || null };
+    return {
+        date,
+        view: q.get('view') === 'value' ? 'value' : 'all',
+        competition: q.get('c') || null,
+        search: (q.get('q') || '').slice(0, 80),
+    };
 }
 
-function writeUrlState({ date, view, competition }) {
+function writeUrlState({ date, view, competition, search }) {
     const q = new URLSearchParams();
+    if (search) q.set('q', search);
     if (date !== localISODate()) q.set('date', date);
     if (view === 'value') q.set('view', 'value');
     if (competition) q.set('c', competition);
@@ -203,16 +213,29 @@ function Matchday() {
     const [error, setError] = useState(null);
     const [reload, setReload] = useState(0);
     const [expandedId, setExpandedId] = useState(null);
-    const [chatMatch, setChatMatch] = useState(null);
+    const [chat, setChat] = useState(null);   // { match, competition }
+    const [query, setQuery] = useState(initial.search);
+    const search = useMatchSearch(query);
+    const searching = cleanQuery(query).length > 0;
+    const searchRef = useRef(null);
+    const expandAfterLoad = useRef(null);
+    const scrollTarget = useRef(null);
 
-    useEffect(() => { writeUrlState({ date, view, competition: competitionKey }); }, [date, view, competitionKey]);
+    useEffect(() => {
+        writeUrlState({ date, view, competition: competitionKey, search: cleanQuery(query) });
+    }, [date, view, competitionKey, query]);
 
     useEffect(() => {
         const controller = new AbortController();
         setStatus('loading');
         setExpandedId(null);
         getSchedule(date, controller.signal)
-            .then((payload) => { setData(payload); setStatus('ready'); })
+            .then((payload) => {
+                setData(payload);
+                setStatus('ready');
+                // "Open day" from a search result: open that match once its day has loaded.
+                if (expandAfterLoad.current) { setExpandedId(expandAfterLoad.current); expandAfterLoad.current = null; }
+            })
             .catch((err) => {
                 if (err.name === 'AbortError') return;
                 setError(err.message);
@@ -228,29 +251,74 @@ function Matchday() {
     const visibleValue = visible.reduce((n, c) => n + c.value_count, 0);
 
     const toggle = useCallback((id) => setExpandedId((cur) => (cur === id ? null : id)), []);
-    const chatCompetition = chatMatch ? competitions.find((c) => c.key === chatMatch.competition_key) : null;
+    const askAbout = useCallback((match, competition = null) => {
+        setChat({ match, competition: competition ?? competitions.find((c) => c.key === match.competition_key) ?? null });
+    }, [competitions]);
+
+    // Picking a day or a competition means browsing again, so it ends the search.
+    const chooseDate = (d) => { setQuery(''); setDate(d); };
+    const chooseCompetition = (key) => { setQuery(''); setCompetitionKey(key); };
+    const clearSearch = () => { setQuery(''); searchRef.current?.focus(); };
+    const openDay = (day, matchId) => {
+        setQuery('');
+        setView('all');
+        setCompetitionKey(null);
+        scrollTarget.current = matchId;
+        if (day === date) { setExpandedId(matchId); return; }
+        expandAfterLoad.current = matchId;
+        setDate(day);
+    };
+
+    // Bring a match opened from search into view once its row is on the page.
+    useEffect(() => {
+        if (!expandedId || scrollTarget.current !== expandedId) return;
+        scrollTarget.current = null;
+        const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+        requestAnimationFrame(() => document.getElementById(`match-${expandedId}-detail`)
+            ?.closest('li')?.scrollIntoView({ block: 'center', behavior: reduce ? 'auto' : 'smooth' }));
+    }, [expandedId, status, query]);
 
     return (
         <>
             <div className="border-b border-line">
-                <div className="mx-auto max-w-7xl px-4 py-2 sm:px-6">
-                    <DateStrip selected={date} onSelect={(d) => setDate(d)} />
+                <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-2 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:gap-6">
+                    <DateStrip selected={searching ? null : date} onSelect={chooseDate} />
+                    <SearchBox
+                        ref={searchRef}
+                        value={query}
+                        onChange={setQuery}
+                        onSubmit={search.flush}
+                        busy={search.status === 'loading'}
+                        className="w-full pb-1 lg:w-[25rem] lg:shrink-0 lg:pb-0"
+                    />
                 </div>
             </div>
 
             <div className="mx-auto grid max-w-7xl gap-6 px-4 pb-16 pt-6 sm:px-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-10">
-                <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto lg:pb-6">
+                {/* While searching, the day's competition list would only distract on a phone. */}
+                <aside className={`lg:sticky lg:top-20 lg:block lg:max-h-[calc(100vh-6rem)] lg:self-start lg:overflow-y-auto lg:pb-6 ${searching ? 'hidden' : ''}`}>
                     {status === 'ready' && (
                         <LiveCompetitions
                             competitions={competitions}
                             summary={data.summary}
-                            activeKey={activeKey}
-                            onSelect={setCompetitionKey}
+                            activeKey={searching ? null : activeKey}
+                            onSelect={chooseCompetition}
                         />
                     )}
                 </aside>
 
                 <main id="main" className="min-w-0">
+                    {searching ? (
+                        <SearchResults
+                            search={search}
+                            expandedId={expandedId}
+                            onToggle={toggle}
+                            onAsk={askAbout}
+                            onClear={clearSearch}
+                            onOpenDay={openDay}
+                        />
+                    ) : (
+                    <>
                     <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                         <div>
                             <h1 className="semi-cond text-3xl font-extrabold leading-tight tracking-tight sm:text-4xl">{longDate(date)}</h1>
@@ -269,20 +337,22 @@ function Matchday() {
                         {status === 'ready' && data.summary.matches === 0 && <EmptyDay date={date} onNextDay={() => setDate(addDays(date, 1))} />}
                         {status === 'ready' && data.summary.matches > 0 && (
                             view === 'value' ? (
-                                <ValueBoard competitions={visible} expandedId={expandedId} onToggle={toggle} onAsk={setChatMatch} animate />
+                                <ValueBoard competitions={visible} expandedId={expandedId} onToggle={toggle} onAsk={askAbout} animate />
                             ) : (
                                 <div className="flex flex-col gap-8">
                                     {visible.map((c) => (
-                                        <CompetitionSection key={c.key} competition={c} expandedId={expandedId} onToggle={toggle} onAsk={setChatMatch} animate />
+                                        <CompetitionSection key={c.key} competition={c} expandedId={expandedId} onToggle={toggle} onAsk={askAbout} animate />
                                     ))}
                                 </div>
                             )
                         )}
                     </div>
+                    </>
+                    )}
                 </main>
             </div>
 
-            {chatMatch && <AnalystPanel match={chatMatch} competition={chatCompetition} onClose={() => setChatMatch(null)} />}
+            {chat && <AnalystPanel match={chat.match} competition={chat.competition} onClose={() => setChat(null)} />}
         </>
     );
 }
@@ -344,7 +414,10 @@ function SiteHeader({ route }) {
                         })}
                     </nav>
                 </div>
-                <AccountArea />
+                <div className="flex items-center gap-2">
+                    <ThemeToggle />
+                    <AccountArea />
+                </div>
             </div>
         </header>
     );

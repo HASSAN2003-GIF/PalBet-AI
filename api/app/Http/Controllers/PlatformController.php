@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Fixture;
 use App\Services\AnalystService;
 use App\Services\CompetitionCatalog;
+use App\Services\MatchSearchService;
 use App\Services\ScheduleService;
 use App\Services\TrackRecordService;
 use Carbon\CarbonImmutable;
@@ -61,6 +62,29 @@ class PlatformController extends Controller
             now()->addSeconds(60),
             fn () => $schedule->forDay($date, $tz)
         );
+
+        return response()->json($payload);
+    }
+
+    // ==========================================
+    // MATCH SEARCH
+    // ==========================================
+    public function searchMatches(Request $request, MatchSearchService $search): JsonResponse
+    {
+        $validated = $request->validate([
+            'q' => ['required', 'string', 'max:80'],
+            'tz' => ['sometimes', 'string', 'timezone:all'],
+            'page' => ['sometimes', 'integer', 'min:1', 'max:10'],
+        ]);
+
+        $query = trim(preg_replace('/\s+/u', ' ', $validated['q']) ?? '');
+        $tz = $validated['tz'] ?? 'UTC';
+        $page = (int) ($validated['page'] ?? 1);
+
+        // Results only change when the engine runs or a match changes state, so a short cache
+        // absorbs repeated typing of the same query without hiding fresh data for long.
+        $key = 'search:'.sha1(mb_strtolower($query)."|{$tz}|{$page}");
+        $payload = Cache::remember($key, now()->addSeconds(30), fn () => $search->search($query, $tz, $page));
 
         return response()->json($payload);
     }

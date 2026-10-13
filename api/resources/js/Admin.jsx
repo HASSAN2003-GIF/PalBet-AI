@@ -3,6 +3,7 @@ import { getAdminStats } from './lib/api';
 import { hoursSince, kickoffTime, percent, timeAgo } from './lib/format';
 import { BrandLockup } from './components/Brand';
 import SiteFooter from './components/SiteFooter';
+import ThemeToggle from './components/ThemeToggle';
 
 const KEY = 'pb_admin_key';
 const readKey = () => { try { return sessionStorage.getItem(KEY) || ''; } catch { return ''; } };
@@ -83,6 +84,7 @@ export default function Admin({ onClose }) {
                                 Lock
                             </button>
                         )}
+                        <ThemeToggle />
                         <button type="button" onClick={onClose} className="rounded-full border border-line-strong px-4 py-1.5 font-medium hover:border-ink">
                             Back to matches
                         </button>

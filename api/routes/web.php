@@ -15,6 +15,10 @@ Route::get('/api/risk-analysis', RiskEngineController::class);
 Route::get('/api/schedule', [PlatformController::class, 'getDailySchedule'])
     ->middleware('throttle:120,1');
 
+// Find matches by team, competition, day or state ("arsenal", "premier league tomorrow").
+Route::get('/api/search', [PlatformController::class, 'searchMatches'])
+    ->middleware('throttle:90,1');
+
 // How the model has done against real results.
 Route::get('/api/track-record', [PlatformController::class, 'getTrackRecord'])
     ->middleware('throttle:60,1');

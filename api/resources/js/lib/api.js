@@ -73,6 +73,11 @@ export const getSchedule = (date, signal) =>
 
 export const getTrackRecord = (days, signal) => request(`/api/track-record?days=${days}`, { signal });
 
+export const searchMatches = (query, page = 1, signal) => {
+    const q = new URLSearchParams({ q: query, tz: userTimezone(), page: String(page) });
+    return request(`/api/search?${q}`, { signal });
+};
+
 export const askAnalyst = (fixtureId, message, history) =>
     request('/api/platform/chat', { method: 'POST', body: { fixture_id: fixtureId, message, history } });
 

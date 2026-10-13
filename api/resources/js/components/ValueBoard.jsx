@@ -40,7 +40,7 @@ export default function ValueBoard({ competitions, expandedId, onToggle, onAsk, 
                                     {sel ? `${sel.label} at ${price(sel.price)}` : 'Value price'}
                                 </span>
                                 <span className="cond nums text-lg font-bold text-home">+{percent(match.value.edge)}</span>
-                                {match.value.won === true && <span className="rounded-full bg-home px-2.5 py-0.5 text-xs font-semibold text-white">Won</span>}
+                                {match.value.won === true && <span className="rounded-full bg-home px-2.5 py-0.5 text-xs font-semibold text-on-home">Won</span>}
                                 {match.value.won === false && <span className="rounded-full bg-ink-soft/15 px-2.5 py-0.5 text-xs font-semibold text-ink-soft">Lost</span>}
                                 <span className="text-sm text-muted">{competition.name}, {competition.region}</span>
                             </div>

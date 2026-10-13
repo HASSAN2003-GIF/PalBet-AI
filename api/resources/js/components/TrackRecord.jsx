@@ -143,7 +143,7 @@ export default function TrackRecord() {
                                         <span className="cond nums hidden text-right text-sm text-muted sm:block">
                                             {v.won ? `+${(v.price - 1).toFixed(2)}` : '−1.00'}
                                         </span>
-                                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${v.won ? 'bg-home text-white' : 'bg-ink-soft/15 text-ink-soft'}`}>
+                                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${v.won ? 'bg-home text-on-home' : 'bg-ink-soft/15 text-ink-soft'}`}>
                                             {v.won ? 'Won' : 'Lost'}
                                         </span>
                                     </li>

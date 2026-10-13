@@ -5,7 +5,7 @@ import { kickoffTime, price } from '../lib/format';
 
 const STATUS = {
     pending: { label: 'Waiting', cls: 'bg-chalk text-ink-soft border border-line-strong' },
-    won: { label: 'Won', cls: 'bg-home text-white' },
+    won: { label: 'Won', cls: 'bg-home text-on-home' },
     lost: { label: 'Lost', cls: 'bg-ink-soft/15 text-ink-soft' },
     void: { label: 'Void', cls: 'bg-chalk text-muted border border-line' },
 };

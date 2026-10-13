@@ -44,9 +44,9 @@ export default function SlipPanel() {
             <button
                 type="button"
                 onClick={() => setSlipOpen(true)}
-                className="fixed bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink py-2.5 pl-4 pr-5 text-sm font-semibold text-chalk shadow-[0_10px_30px_rgba(19,33,27,0.3)] hover:bg-home sm:left-auto sm:right-6 sm:translate-x-0"
+                className="fixed bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink py-2.5 pl-4 pr-5 text-sm font-semibold text-chalk shadow-[0_10px_30px_var(--color-shadow)] hover:bg-home sm:left-auto sm:right-6 sm:translate-x-0"
             >
-                <span className="cond nums grid h-6 min-w-6 place-items-center rounded-full bg-card px-1.5 text-sm font-extrabold text-card-ink">{picks.length}</span>
+                <span className="cond nums grid h-6 min-w-6 place-items-center rounded-full bg-card px-1.5 text-sm font-extrabold text-on-card">{picks.length}</span>
                 Your slip
                 <span className="cond nums font-bold text-chalk/70">{price(combined)}</span>
             </button>
@@ -57,7 +57,7 @@ export default function SlipPanel() {
     return (
         <aside
             aria-label="Prediction slip"
-            className="panel-in fixed inset-x-0 bottom-0 z-30 max-h-[80vh] overflow-y-auto rounded-t-2xl border border-line bg-paper shadow-[0_-12px_40px_rgba(19,33,27,0.2)] sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[23rem] sm:rounded-2xl"
+            className="panel-in fixed inset-x-0 bottom-0 z-30 max-h-[80vh] overflow-y-auto rounded-t-2xl border border-line bg-paper shadow-[0_-12px_40px_var(--color-shadow)] sm:inset-x-auto sm:bottom-6 sm:right-6 sm:w-[23rem] sm:rounded-2xl"
         >
             <header className="flex items-center justify-between border-b border-line px-5 py-3">
                 <h2 className="semi-cond text-lg font-bold">Your slip</h2>
@@ -139,7 +139,7 @@ export default function SlipPanel() {
                             type="button"
                             onClick={place}
                             disabled={pending || stakeNum < 1 || short}
-                            className="rounded-full bg-home px-5 py-3 text-sm font-semibold text-white hover:bg-ink disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded-full bg-home px-5 py-3 text-sm font-semibold text-on-home hover:bg-ink disabled:cursor-not-allowed disabled:opacity-40"
                         >
                             {pending ? 'Placing…' : user ? `Place slip for ${stakeNum || 0} tokens` : 'Create a free account to place it'}
                         </button>
